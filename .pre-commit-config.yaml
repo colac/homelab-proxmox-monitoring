@@ -1,0 +1,105 @@
+---
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: no-commit-to-branch
+
+  # EditorConfig validation
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: 3.6.0
+    hooks:
+      - id: editorconfig-checker-system
+        alias: ec
+
+  # Terraform
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.104.0
+    hooks:
+      - id: terraform_docs
+        files: ^terraform/
+      - id: terraform_fmt
+        args:
+          - --args=-no-color
+          - --args=-diff
+          - --args=-recursive
+        files: ^terraform/
+      # - id: terraform_trivy
+      #   args:
+      #     - --args=-c __GIT_WORKING_DIR__/.trivy.yaml
+      #     - --args=--cache-dir /tmp/.cache/trivy
+      #   files: ^terraform/
+      #      - id: terraform_tflint
+      #        args:
+      #          - --args=--config __GIT_WORKING_DIR__/.tflint.hcl
+      #        files: ^terraform/
+      # - id: terraform_checkov
+      #   args:
+      #     - --args=--quiet
+      #     - --args=-c checkov.yaml
+      #   files: ^terraform/
+
+      - id: packer_fmt
+        name: Packer fmt
+        entry: bash -c 'packer fmt -recursive .'
+        language: system
+        files: ^packer/\.pkr\.hcl$
+        pass_filenames: false
+
+      - id: packe_validate
+        name: Packer validate
+        entry: bash -c 'for dir in */; do (cd "$dir" && if ls *.pkr.hcl 1> /dev/null 2>&1; then packer validate .; fi); done'
+        language: system
+        files: ^packer/\.pkr\.hcl$
+        pass_filenames: false
+
+#  # Ansible
+#  - repo: https://github.com/ansible/ansible-lint.git
+#    rev: v25.9.2
+#    hooks:
+#      - id: ansible-lint
+#        args: [-c, .ansible-lint]
+#        additional_dependencies: ["ansible"]
+#        language_version: python3
+#        files: ^ansible/.*\.ya?ml$
+#
+#  # YAML linting
+#  - repo: https://github.com/adrienverge/yamllint
+#    rev: v1.37.1
+#    hooks:
+#      - id: yamllint
+#        args: [--strict, -c=.yamllint.yml]
+#        files: ^ansible/.*\.ya?ml$
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.46.0
+    hooks:
+      - id: markdownlint
+        args: [--config, .markdownlint.json]
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [-x, -S, warning]
+
+#  # Check for secrets
+#  - repo: https://github.com/gitleaks/gitleaks
+#    rev: v8.18.2
+#    hooks:
+#      - id: gitleaks
+
+  # Commit message linting
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.23.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ["@commitlint/config-conventional"]
