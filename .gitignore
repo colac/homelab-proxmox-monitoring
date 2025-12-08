@@ -71,6 +71,7 @@ ENV/
 .venv/
 
 # Node.js
+node_modules
 .node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -110,7 +111,9 @@ secrets.yaml
 *.log
 .cache/
 
-# packer
-*.pkvars*
+# OS specific
+Thumbs.db
 
-*homelab-proxmox-*
+homelab-proxmox-core
+
+*.pub
