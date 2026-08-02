@@ -6,7 +6,7 @@
 !example.tfvars
 .terraform/
 **/.terraform/*
-#.terraform.lock.hcl
+.terraform.lock.hcl
 crash.log
 crash.*.log
 override.tf
@@ -42,7 +42,9 @@ secrets/
 *.retry
 .ansible/
 ansible.log
-ansible/inventory
+# Real inventory and any secret var files — keep only the .example
+ansible/inventory/hosts.yml
+ansible/vault.yml
 
 # Python
 __pycache__/
