@@ -1,0 +1,25 @@
+# Managed by Ansible. Input to `elasticsearch-certutil cert` — one certificate
+# covering every name and address the stack is reached by.
+#
+# On this single-node deployment Elasticsearch, Kibana and Fleet Server are all
+# the same host, so the SAN list is short. It still iterates the groups rather
+# than hard-coding the host: the groups are what the Terraform-generated
+# inventory populates, and `unique` keeps the list clean when (as here) one
+# host belongs to several of them.
+#
+# The IP SANs matter more than usual here — the VM takes a DHCP lease and
+# Kibana is reached in a browser at https://<ip>:5601, so a cert without the
+# address SAN would fail validation even after the CA is trusted.
+{% set stack_hosts = (groups['elasticsearch'] | default([])) + (groups['kibana'] | default([])) %}
+instances:
+  - name: "es-shared"
+    dns:
+{% for host in stack_hosts | unique %}
+      - "{{ host }}"
+{% endfor %}
+      - "localhost"
+    ip:
+{% for host in stack_hosts | unique %}
+      - "{{ hostvars[host].ansible_host }}"
+{% endfor %}
+      - "127.0.0.1"

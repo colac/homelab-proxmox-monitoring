@@ -1,0 +1,124 @@
+---
+# tasks file for kibana_tls
+#
+# Obtains (and, via certbot's own systemd timer, keeps renewed) a Let's
+# Encrypt certificate for Kibana's public URL. DNS-01 via the
+# certbot-dns-cloudflare plugin — required because Kibana has no public
+# port 80/443 exposure for an HTTP-01 challenge; the ACME TXT record
+# lands in Cloudflare regardless of where the A record itself is hosted.
+#
+# Ported from the six-VM repo, where it ran live for the same name.
+#
+# Runs on the host (apt package + systemd timer), not in a container: this
+# is a recurring, scheduled job, not a one-shot generate-once tool
+# invocation (es_certs's shape). Keeping it host-side also means the
+# renewal deploy-hook can call `docker compose restart kibana` directly,
+# with no need to mount the Docker socket into a container just to reach a
+# sibling container.
+#
+# Runs in the same play as the kibana role, ahead of it (playbooks/
+# 35-kibana.yml), so the certificate is on disk before the container that
+# mounts it first starts, and so the install tasks below can notify the kibana
+# role's restart handler.
+
+- name: Install certbot + Cloudflare DNS plugin
+  ansible.builtin.apt:
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: Ensure Kibana project + certs directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  loop:
+    - "{{ elastic_base_dir }}/kibana"
+    - "{{ elastic_base_dir }}/kibana/certs"
+  become: true
+
+- name: Ensure /etc/letsencrypt exists
+  ansible.builtin.file:
+    path: /etc/letsencrypt
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Render Cloudflare DNS API token credentials file
+  ansible.builtin.template:
+    src: cloudflare.ini.j2
+    dest: "{{ kibana_tls_cloudflare_ini }}"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  no_log: true
+
+- name: Render certbot deploy-hook script
+  ansible.builtin.template:
+    src: certbot-deploy-hook.sh.j2
+    dest: "{{ elastic_base_dir }}/kibana/certbot-deploy-hook.sh"
+    owner: root
+    group: root
+    mode: "0750"
+  become: true
+
+# Idempotent: with a valid certificate already in place certbot prints "not
+# yet due for renewal" and exits 0 without contacting Let's Encrypt, so
+# re-running the playbook costs nothing against the rate limits.
+- name: Request/renew the Kibana Let's Encrypt certificate
+  ansible.builtin.command:
+    argv:
+      - certbot
+      - certonly
+      - --dns-cloudflare
+      - --dns-cloudflare-credentials
+      - "{{ kibana_tls_cloudflare_ini }}"
+      - --dns-cloudflare-propagation-seconds
+      - "{{ kibana_tls_propagation_seconds | string }}"
+      - -d
+      - "{{ kibana_fqdn }}"
+      - --non-interactive
+      - --agree-tos
+      - -m
+      - "{{ acme_email }}"
+      - --deploy-hook
+      - "{{ elastic_base_dir }}/kibana/certbot-deploy-hook.sh"
+  register: _kibana_tls_certbot
+  changed_when: "'Successfully received certificate' in _kibana_tls_certbot.stdout"
+  become: true
+
+# The deploy-hook already did this on a fresh issuance. Doing it here as well
+# covers the case the hook cannot: a certificate that already exists in
+# /etc/letsencrypt (certbot says "not yet due" and runs no hook) while the
+# copy Kibana mounts is missing or stale — a wiped project directory, or a
+# kibana_fqdn change back to a name issued before. `copy` follows the live/
+# symlinks, so this compares and installs the real current files.
+- name: Install the certificate where the Kibana container mounts it
+  ansible.builtin.copy:
+    src: "/etc/letsencrypt/live/{{ kibana_fqdn }}/{{ item }}"
+    dest: "{{ elastic_base_dir }}/kibana/certs/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - fullchain.pem
+    - privkey.pem
+  become: true
+  notify: Restart kibana
+
+- name: Confirm certbot's renewal timer is active
+  ansible.builtin.systemd_service:
+    name: certbot.timer
+    state: started
+    enabled: true
+  become: true

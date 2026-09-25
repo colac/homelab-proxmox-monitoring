@@ -1,0 +1,155 @@
+---
+# Read-only end-to-end verification. Changes nothing, so it is safe to run on
+# its own at any time:
+#   cd ansible && ansible-playbook playbooks/99-healthcheck.yml
+- name: Check the Elastic Stack is healthy
+  hosts: elasticsearch
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Query cluster health
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:{{ es_http_port }}/_cluster/health"
+        user: elastic
+        password: "{{ es_elastic_password }}"
+        force_basic_auth: true
+        ca_path: "{{ elastic_base_dir }}/elasticsearch/certs/ca.crt"
+        return_content: true
+      register: _hc_health
+      changed_when: false
+      no_log: true
+
+    - name: Report cluster health
+      ansible.builtin.debug:
+        msg: >-
+          Cluster {{ _hc_health.json.cluster_name }} is
+          {{ _hc_health.json.status }} — {{ _hc_health.json.number_of_nodes }} node(s),
+          {{ _hc_health.json.active_shards }} active shards,
+          {{ _hc_health.json.unassigned_shards }} unassigned.
+          {{ 'Yellow on a single node means some index still asks for a replica
+              there is nowhere to place — check the logs@custom/metrics@custom
+              component templates.' if _hc_health.json.status == 'yellow' else '' }}
+
+    - name: Query Kibana status
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:{{ kibana_port }}/api/status"
+        validate_certs: false
+        user: elastic
+        password: "{{ es_elastic_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: _hc_kibana
+      changed_when: false
+      no_log: true
+
+    - name: Report Kibana status
+      ansible.builtin.debug:
+        msg: "Kibana {{ _hc_kibana.json.version.number }} — {{ _hc_kibana.json.status.overall.level }}"
+
+    # From the controller, by name, validating the certificate — the one
+    # check that exercises what a browser does: PiHole's A record, the Let's
+    # Encrypt chain, and the name on it. The loopback check above skips all
+    # three. 401 counts as reachable: this asks for no credentials.
+    - name: Check Kibana's public URL presents a trusted certificate
+      ansible.builtin.uri:
+        url: "{{ kibana_publicbaseurl }}/api/status"
+        validate_certs: true
+        status_code: [200, 401]
+        timeout: 15
+      delegate_to: localhost
+      become: false
+      register: _hc_kibana_public
+      changed_when: false
+      failed_when: false
+      when: kibana_tls_letsencrypt | default(false) | bool
+
+    - name: Report Kibana's public URL
+      ansible.builtin.debug:
+        msg: >-
+          {{ kibana_publicbaseurl }}:
+          {{ 'OK, trusted certificate'
+             if (_hc_kibana_public.status | default(-1)) in [200, 401]
+             else 'FAILED — ' ~ (_hc_kibana_public.msg | default('no response'))
+                  ~ '. Check that PiHole resolves ' ~ kibana_fqdn ~ ' to '
+                  ~ ansible_host ~ ' and that certbot issued a certificate.' }}
+      when: kibana_tls_letsencrypt | default(false) | bool
+
+    - name: List the Fleet-enrolled agents and their health
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agents"
+        validate_certs: false
+        user: elastic
+        password: "{{ es_elastic_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: _hc_agents
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when: fleet_server_enabled | default(false) | bool
+
+    - name: Report agent health
+      vars:
+        _agents: "{{ _hc_agents.json.list | default([]) }}"
+        _unhealthy: >-
+          {{ _agents | rejectattr('status', 'equalto', 'online')
+             | map(attribute='local_metadata.host.hostname') | list }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ _agents | length }} agent(s) enrolled.
+          {{ 'All online.' if _unhealthy | length == 0
+             else 'NOT online: ' ~ _unhealthy | join(', ') }}
+      when: fleet_server_enabled | default(false) | bool
+
+- name: Check the exporters are answering
+  hosts: monitoring
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Probe each enabled exporter
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ item.port }}/metrics"
+        status_code: 200
+      register: _hc_exporter
+      changed_when: false
+      failed_when: false
+      when: item.enabled
+      loop:
+        - { name: "graphite (TrueNAS)", port: "{{ exporters_graphite_metrics_port }}", enabled: "{{ exporters_truenas_enabled }}" }
+        - { name: nextcloud, port: "{{ exporters_nextcloud_port }}", enabled: "{{ exporters_nextcloud_enabled }}" }
+        - { name: pve, port: "{{ exporters_pve_port }}", enabled: "{{ exporters_pve_enabled }}" }
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Report exporter state
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item.name }}:
+          {{ 'OK' if item.status | default(0) == 200
+             else ('DOWN (status ' ~ (item.status | default('n/a')) ~ ')') }}
+      loop: "{{ _hc_exporter.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: not (item.skipped | default(false))
+
+    # A silent-but-healthy graphite_exporter is the expected failure mode here:
+    # it starts fine and serves an empty metrics page whether or not TrueNAS
+    # was ever configured to push to it.
+    - name: Check whether TrueNAS has actually pushed anything
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ exporters_graphite_metrics_port }}/metrics"
+        return_content: true
+        status_code: 200
+      register: _hc_graphite
+      changed_when: false
+      failed_when: false
+      when: exporters_truenas_enabled
+
+    - name: Report TrueNAS ingest
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'TrueNAS metrics are arriving.'
+             if ('job="truenas"' in (_hc_graphite.content | default('')))
+             else 'graphite_exporter is up but has received nothing from TrueNAS —
+                   check its Reporting -> Exporters entry (see MONITORING.md).' }}
+      when: exporters_truenas_enabled

@@ -1,0 +1,10 @@
+# Managed by Ansible (role: exporters) — do not edit by hand.
+TZ=Europe/Lisbon
+
+# API token of a PVEAuditor-role user: read-only, so a compromise of this VM
+# cannot change anything on the hypervisor. That ACL is the real boundary here,
+# not anything in this file.
+PVE_USER={{ exporters_pve_token_id.split('!')[0] }}
+PVE_TOKEN_NAME={{ exporters_pve_token_id.split('!')[1] }}
+PVE_TOKEN_VALUE={{ exporters_pve_token_secret }}
+PVE_VERIFY_SSL={{ exporters_pve_verify_ssl | lower }}

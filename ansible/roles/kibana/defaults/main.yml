@@ -1,0 +1,12 @@
+---
+# defaults file for kibana
+#
+# kibana_port, kibana_tls_enabled, kibana_tls_letsencrypt, kibana_fqdn,
+# kibana_publicbaseurl and fleet_server_enabled are all set in
+# inventory/group_vars/monitoring.yml — the fleet_bootstrap and kibana_tls
+# roles read several of them too, and role defaults are not visible to a
+# different role's cross-host lookups.
+kibana_port: 5601
+kibana_tls_enabled: true
+kibana_tls_letsencrypt: false
+kibana_publicbaseurl: ""

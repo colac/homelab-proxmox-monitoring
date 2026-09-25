@@ -1,0 +1,44 @@
+---
+# defaults file for fleet_bootstrap
+#
+# fleet_server_port, fleet_server_policy_id, fleet_server_host_id and the two
+# agent policy IDs live in inventory/group_vars/ instead — the elastic_agent
+# role reads them too, from other hosts, where role defaults are not visible.
+
+# The two agent policies every host is assigned to. Kept as one list so the
+# create/monitoring/enrollment-token steps can loop over it instead of
+# repeating four near-identical task blocks per policy.
+#
+#   slug       suffix for package-policy IDs (system-homelab, docker-homelab…)
+#   token_file name of the cached enrollment token under
+#              es_secrets_local_cache_dir; the elastic_agent role reads the
+#              matching one back when enrolling each host
+_fleet_bootstrap_agent_policies:
+  - id: "{{ homelab_agents_policy_id }}"
+    name: "Homelab Agents Policy"
+    slug: homelab
+    token_file: homelab_agents_enrollment_token.txt
+  - id: "{{ monitoring_agent_policy_id }}"
+    name: "Monitoring Agent Policy"
+    slug: monitoring
+    token_file: monitoring_agent_enrollment_token.txt
+
+# Integration packages to install. `prometheus` is what lets the agent scrape
+# the exporters — Elastic ships no TrueNAS or Nextcloud integration, so those
+# arrive as Prometheus metrics or not at all.
+_fleet_bootstrap_packages:
+  - system
+  - docker
+  - prometheus
+
+# Exporters the Prometheus integration scrapes, built from whichever are
+# enabled. Host-loopback addresses: the exporters publish their metrics ports
+# on 127.0.0.1 only, and the Elastic Agent runs on the host (deb package, not
+# a container), so it reaches them without any of them being exposed to the
+# LAN. No scheme — the metricbeat prometheus module's `hosts` var takes
+# host:port, per the package manifest.
+_fleet_bootstrap_prometheus_targets: >-
+  {{
+    ([('localhost:' ~ exporters_graphite_metrics_port) ] if (exporters_truenas_enabled | default(false)) else [])
+    + ([('localhost:' ~ exporters_nextcloud_port)] if (exporters_nextcloud_enabled | default(false)) else [])
+  }}

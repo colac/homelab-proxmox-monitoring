@@ -1,0 +1,13 @@
+---
+# Which age recipients can decrypt which files.
+#
+# SOPS encrypts *values* in place, so the files matched here are ciphertext on
+# disk and safe to commit — that is the whole point of the scheme. The age
+# PRIVATE key lives at ~/.config/sops/age/keys.txt and is never in the repo.
+#
+# To let another person or machine decrypt, add their age public key to the
+# `age:` list below (comma-separated) and re-encrypt:
+#     sops updatekeys secrets.yaml
+creation_rules:
+  - path_regex: secrets\.ya?ml$
+    age: age1phcdsaskydmwz3d2nug3jdgkh6czetfszktjcu4ur7y5klvtegaqmehlyy

@@ -1,0 +1,7 @@
+---
+- name: Deploy Elasticsearch
+  hosts: elasticsearch
+  become: true
+  gather_facts: true
+  roles:
+    - elasticsearch

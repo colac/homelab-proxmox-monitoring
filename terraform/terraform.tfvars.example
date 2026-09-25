@@ -1,0 +1,40 @@
+# ----------------------------------------------------------------------------
+# OPTIONAL overrides for the monitoring project. Copy to terraform.tfvars only if
+# you need to change something — every variable below already has a default in
+# variables.tf, so `terraform apply` works with no tfvars file at all.
+#
+# The Proxmox endpoint and API token are deliberately NOT here. They arrive as
+# TF_VAR_pm_api_url / TF_VAR_pm_api_token_id / TF_VAR_pm_api_token_secret from
+# terraform/.envrc, which direnv fills by decrypting the repo-root secrets.yaml
+# (SOPS + age). That keeps every credential out of the working tree, which is
+# why *.tfvars is git-ignored and this .example carries no secrets.
+# ----------------------------------------------------------------------------
+
+# Where to place the VM
+proxmox_node    = "pve"
+proxmox_pool    = null
+proxmox_storage = "local-lvm"
+network_bridge  = "vmbr0"
+
+# Template produced by the Packer build
+template_name = "ubuntu-26.04-template"
+
+# Monitoring VM sizing. This one VM replaces the six-VM Elastic cluster in
+# homelab-proxmox-elastic: single-node Elasticsearch, Kibana, Fleet Server and
+# the exporters all live here. es_heap_size in
+# ansible/inventory/group_vars/monitoring.yml must stay at or below half of
+# memory_mb — raise both together, never just the heap.
+vm_name    = "monitoring"
+cpu_cores  = 4
+memory_mb  = 8192
+disk0_size = "24G"
+
+# Elasticsearch's data is the `esdata` Docker volume, so it lands under
+# /var/lib/docker — on this disk. Raising retention means raising this, not
+# disk0_size.
+data_disk_size = "100G"
+
+# Cloud-init user + SSH key used by Terraform and, later, Ansible.
+# Same deploy key as the other projects.
+vm_user        = "ubuntu"
+ssh_public_key = "~/.ssh/homelab-proxmox.pub"

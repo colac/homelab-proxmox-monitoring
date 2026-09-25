@@ -1,0 +1,10 @@
+---
+# defaults file for elasticsearch
+#
+# Deliberately empty of es_* values. Everything this role needs — es_node_name,
+# es_heap_size, es_http_port, es_transport_port, es_bootstrap_cluster,
+# es_bootstrap_memory_lock — lives in inventory/group_vars/ instead, because
+# other roles on other hosts read them: Kibana and fleet_bootstrap both build
+# URLs from es_http_port, and the env template reads es_node_name back out of
+# hostvars. Role defaults are not visible that way, and naming them
+# elasticsearch_* to satisfy the linter would break the cross-role reads.

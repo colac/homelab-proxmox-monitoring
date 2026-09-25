@@ -1,0 +1,37 @@
+---
+# Redeploy everything this repo owns, in dependency order.
+#
+# Run from ansible/, after each project's `terraform apply` has generated its
+# inventory fragment. direnv supplies every credential as an environment
+# variable on `cd ansible`, so there is no vault password and no -e flag:
+#
+#   cd ansible
+#   ansible-playbook playbooks/site.yml
+#
+# Every play is scoped to a group, so a host that does not exist yet is simply
+# skipped — running this with only the monitoring VM provisioned is fine.
+#
+# The order is load-bearing: certificates before Elasticsearch (it will not
+# start without them), Elasticsearch before Kibana, Kibana before Fleet Server
+# (which needs a service token minted through it), Fleet Server before the
+# agents (which have nothing to enroll against otherwise).
+- name: Preflight
+  import_playbook: 00-bootstrap.yml
+- name: Nextcloud
+  import_playbook: 10-nextcloud.yml
+- name: Elastic TLS certificates
+  import_playbook: 20-elastic-certs.yml
+- name: Elasticsearch
+  import_playbook: 25-elasticsearch.yml
+- name: Elasticsearch security bootstrap
+  import_playbook: 30-elasticsearch-security.yml
+- name: Kibana
+  import_playbook: 35-kibana.yml
+- name: Fleet Server
+  import_playbook: 40-fleet-server.yml
+- name: Prometheus exporters
+  import_playbook: 45-exporters.yml
+- name: Elastic Agents
+  import_playbook: 50-elastic-agent.yml
+- name: Health check
+  import_playbook: 99-healthcheck.yml

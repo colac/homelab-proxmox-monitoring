@@ -1,0 +1,114 @@
+---
+# ===========================================================================
+# Values shared across hosts. Hand-authored — Terraform never writes here, it
+# only generates the inventory fragments next to this directory.
+#
+# Anything a role on host A needs to know about host B lives here rather than
+# in a role's defaults/, because role defaults are not visible cross-host.
+# That is why the ports and Fleet policy IDs below are in this file: the
+# elastic_agent role runs on every host and has to build an enrollment URL
+# pointing at the monitoring VM.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Stack version — the single pin. Bump here, roll out via playbook.
+#
+# The Packer template's elastic_agent_version should track this. If they
+# drift, the elastic_agent role notices and reinstalls the agent from
+# Elastic's .deb, so a stack bump does not strictly require a template
+# rebuild — it just means every host re-downloads the package once.
+# ---------------------------------------------------------------------------
+stack_version: "9.4.2"
+
+es_image: "docker.elastic.co/elasticsearch/elasticsearch:{{ stack_version }}"
+kibana_image: "docker.elastic.co/kibana/kibana:{{ stack_version }}"
+# Fleet Server bootstraps from the elastic-agent image, not a dedicated
+# fleet-server one.
+fleet_server_image: "docker.elastic.co/elastic-agent/elastic-agent:{{ stack_version }}"
+
+# ---------------------------------------------------------------------------
+# Layout
+# ---------------------------------------------------------------------------
+# Compose projects live here on every VM. Created by the Packer template
+# (packer/ubuntu-24.04/http/user-data.yml.tpl) — this value must stay in sync
+# with the template's elastic_base_dir variable, since Ansible only uses it to
+# know where to render compose files, never to create the directory.
+elastic_base_dir: /opt/elastic
+
+# Where the CA cert lands on every host. Kibana, Fleet Server and every
+# Elastic Agent read it from here to trust Elasticsearch's HTTP layer.
+es_shared_certs_dir: "{{ elastic_base_dir }}/certs"
+
+# Controller-local caches, outside git (see .gitignore). The generated CA and
+# node cert, and the minted service/enrollment tokens, are machine state — not
+# human-chosen secrets, so they do not belong in secrets.yaml. They live here,
+# not in a role's defaults/, because they are written by one role and read
+# back by several others on different hosts.
+es_certs_local_cache_dir: "{{ playbook_dir }}/../.certs"
+es_secrets_local_cache_dir: "{{ playbook_dir }}/../.secrets-cache"
+
+# ---------------------------------------------------------------------------
+# Ports
+# ---------------------------------------------------------------------------
+es_http_port: 9200
+es_transport_port: 9300
+# Referenced by the elastic_agent role on every host to build the enrollment
+# URL, so it needs the cross-host visibility this file provides.
+fleet_server_port: 8220
+
+# ---------------------------------------------------------------------------
+# Security — always on.
+#
+# Elasticsearch 8+ defaults to security enabled, and Fleet Server flatly
+# requires a secured cluster to enroll agents against, so there is no
+# "disabled" path here to fall back to.
+# ---------------------------------------------------------------------------
+es_security_enabled: true
+cluster_name: homelab
+
+# Human-chosen passwords. They arrive as environment variables: the repo-root
+# secrets.yaml is SOPS-encrypted, direnv decrypts it once and ansible/.envrc
+# exports these three, so nothing here is ever a literal and no vault password
+# has to be typed. `cd ansible` (or anywhere under it) is the only setup step.
+#
+# Everything else the stack needs — the CA, the node cert, service tokens,
+# enrollment API keys — is generated and cached locally instead; see the cache
+# dirs above.
+es_elastic_password: "{{ lookup('env', 'ELASTIC_PASSWORD') }}"
+kibana_system_password: "{{ lookup('env', 'KIBANA_SYSTEM_PASSWORD') }}"
+kibana_encryption_key: "{{ lookup('env', 'KIBANA_ENCRYPTION_KEY') }}"
+
+# ---------------------------------------------------------------------------
+# Nextcloud's public hostname.
+#
+# Lives in all.yml rather than group_vars/nextcloud.yml because the monitoring
+# host needs it too: exporters_nextcloud_server scrapes Nextcloud through
+# Caddy over this name, and group_vars for a group a host is not in are not
+# visible to it.
+# ---------------------------------------------------------------------------
+nextcloud_domain: "{{ lookup('env', 'NEXTCLOUD_DOMAIN') }}"
+
+# ---------------------------------------------------------------------------
+# Let's Encrypt via Cloudflare DNS-01 — shared by two hosts.
+#
+# Caddy on the Nextcloud VM (reverse_proxy role) and certbot on the monitoring
+# VM (kibana_tls role) both prove control of the zone by writing an
+# _acme-challenge TXT record, so both need the same token and account email.
+# They live here for the same reason nextcloud_domain does: group_vars for a
+# group a host is not in are invisible to it.
+#
+# The env name REVERSE_PROXY_ACME_EMAIL predates the second consumer; it is
+# kept so secrets.yaml and ansible/.envrc need no change.
+# ---------------------------------------------------------------------------
+acme_email: "{{ lookup('env', 'REVERSE_PROXY_ACME_EMAIL') }}"
+cloudflare_dns_api_token: "{{ lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') }}"
+
+# ---------------------------------------------------------------------------
+# Fleet agent policies
+#
+# Two policies, because a Fleet agent belongs to exactly one. The monitoring
+# VM needs the Prometheus integration to scrape the exporters running on it;
+# no other host should, so it cannot share the general policy.
+# ---------------------------------------------------------------------------
+homelab_agents_policy_id: homelab-agents-policy
+monitoring_agent_policy_id: monitoring-agent-policy

@@ -1,0 +1,58 @@
+---
+# tasks file for kibana
+
+- name: Create Kibana project + certs directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  loop:
+    - "{{ elastic_base_dir }}/kibana"
+    - "{{ elastic_base_dir }}/kibana/certs"
+  become: true
+
+# Kibana's container runs as uid 1000 and needs to read the private key, so
+# this is 0644 rather than 0600. The key is only as exposed as the VM itself,
+# and the same pair is already world-readable where Elasticsearch mounts it.
+- name: Copy the CA, node cert and key from the controller-local cache
+  ansible.builtin.copy:
+    src: "{{ es_certs_local_cache_dir }}/{{ item }}"
+    dest: "{{ elastic_base_dir }}/kibana/certs/{{ item }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  loop:
+    - ca.crt
+    - node.crt
+    - node.key
+  become: true
+  notify: Restart kibana
+
+- name: Render docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ elastic_base_dir }}/kibana/docker-compose.yml"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  become: true
+  notify: Restart kibana
+
+- name: Render .env
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ elastic_base_dir }}/kibana/.env"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0640"
+  become: true
+  no_log: true
+  notify: Restart kibana
+
+- name: Bring up Kibana
+  community.docker.docker_compose_v2:
+    project_src: "{{ elastic_base_dir }}/kibana"
+    state: present
+  become: true

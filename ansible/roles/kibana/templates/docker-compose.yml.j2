@@ -1,0 +1,57 @@
+# Managed by Ansible (role: kibana) — do not edit by hand.
+services:
+  kibana:
+    image: ${KIBANA_IMAGE}
+    container_name: kibana
+    restart: unless-stopped
+    environment:
+      - SERVER_NAME=kibana
+      - SERVER_HOST=0.0.0.0
+      - ELASTICSEARCH_HOSTS=${ES_HOSTS}
+{% if kibana_publicbaseurl | length > 0 %}
+      - SERVER_PUBLICBASEURL=${PUBLIC_BASE_URL}
+{% endif %}
+{% if es_security_enabled | bool %}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD}
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=${ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES}
+{% endif %}
+{% if kibana_tls_enabled | bool %}
+      - SERVER_SSL_ENABLED=true
+{% if kibana_tls_letsencrypt | default(false) | bool %}
+      # Let's Encrypt certificate for kibana_fqdn, installed into the certs
+      # directory by the kibana_tls role and refreshed there by certbot's
+      # deploy-hook on every renewal.
+      - SERVER_SSL_CERTIFICATE=/usr/share/kibana/config/certs/fullchain.pem
+      - SERVER_SSL_KEY=/usr/share/kibana/config/certs/privkey.pem
+{% else %}
+      # Serves HTTPS with the internal CA's node certificate — the same pair
+      # Elasticsearch and Fleet Server present, distributed by es_certs. A
+      # browser warns until that CA is trusted, which is a smaller problem
+      # than the elastic superuser password crossing the LAN in cleartext.
+      - SERVER_SSL_CERTIFICATE=/usr/share/kibana/config/certs/node.crt
+      - SERVER_SSL_KEY=/usr/share/kibana/config/certs/node.key
+{% endif %}
+{% endif %}
+{% if fleet_server_enabled | default(false) | bool %}
+      # Fleet encrypts the service tokens and API keys it stores as saved
+      # objects with this key — without it, POST /api/fleet/setup fails with
+      # "Agent binary source needs encrypted saved object api key to be set",
+      # verified empirically against a live Kibana.
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+{% endif %}
+    volumes:
+      # One mount, unlike the multi-VM version of this stack: there, Kibana's
+      # Let's Encrypt certificate had to live in a sibling directory because
+      # config/certs was already a read-only bind mount and Docker cannot
+      # create a child mountpoint inside one. Here the CA, the node pair and
+      # the Let's Encrypt pair (kibana_tls) are all written into this one
+      # host directory, so one mount carries every file.
+      - {{ elastic_base_dir }}/kibana/certs:/usr/share/kibana/config/certs:ro
+    ports:
+      - "${KIBANA_PORT}:5601"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSk {{ 'https' if (kibana_tls_enabled | bool) else 'http' }}://localhost:5601/api/status || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 12

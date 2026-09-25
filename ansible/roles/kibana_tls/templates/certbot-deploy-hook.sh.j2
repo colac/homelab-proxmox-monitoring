@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Managed by Ansible (role: kibana_tls) — do not edit by hand.
+#
+# Invoked by certbot on every successful issuance and renewal. Registered via
+# --deploy-hook at `certbot certonly` time, which persists it into
+# /etc/letsencrypt/renewal/{{ kibana_fqdn }}.conf, so certbot's own systemd
+# timer re-runs it on every automatic renewal with no cron entry of ours.
+#
+# $RENEWED_LINEAGE is set by certbot to the live cert directory
+# (/etc/letsencrypt/live/{{ kibana_fqdn }}) at hook execution time.
+set -euo pipefail
+
+# 0644 on the key: Kibana's container runs as uid 1000 and has to read it. It
+# is only as exposed as the VM itself, same as node.key alongside it.
+install -o root -g root -m 0644 "$RENEWED_LINEAGE/fullchain.pem" "{{ elastic_base_dir }}/kibana/certs/fullchain.pem"
+install -o root -g root -m 0644 "$RENEWED_LINEAGE/privkey.pem" "{{ elastic_base_dir }}/kibana/certs/privkey.pem"
+
+# Only restart a Kibana that exists. On a fresh VM the first issuance runs
+# before the kibana role has rendered its compose file, and under set -e a
+# failed restart would fail the hook — the files above are what matter then,
+# and Kibana picks them up when it first starts.
+if docker ps --quiet --filter name='^kibana$' | grep -q .; then
+  docker compose -f "{{ elastic_base_dir }}/kibana/docker-compose.yml" restart kibana
+fi

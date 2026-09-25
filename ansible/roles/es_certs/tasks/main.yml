@@ -1,0 +1,219 @@
+---
+# tasks file for es_certs
+#
+# Generates one CA + one node certificate (PEM, SANs covering the stack host)
+# via elasticsearch-certutil, then distributes the result.
+#
+# Ported from homelab-proxmox-elastic and simplified for a single node: the
+# original also had to fan the certificate out to es-02/es-03, which does not
+# apply here. Everything else is kept deliberately, including the comments
+# explaining why — these are decisions that were paid for with live debugging.
+#
+# Generation runs via a one-off `docker run --rm` against the pinned es_image,
+# bind-mounting the host's certs directory directly — NOT via `docker exec`
+# into a live elasticsearch container. On a from-scratch bootstrap no such
+# container exists yet at this point in site.yml, so exec would fail outright.
+#
+# PEM output avoids p12/keystore files entirely — no elasticsearch-keystore
+# step, no keystore password. That sidesteps the known Docker
+# ELASTIC_PASSWORD/KEYSTORE_PASSWORD interaction bug
+# (elastic/elasticsearch#98115) by construction rather than by relying on an
+# empty p12 password.
+#
+# Idempotency: regenerating against an already-secured, already-green cluster
+# would invalidate trust everywhere at once. Generation only happens when BOTH
+# the controller-local cache and the node's own certs directory are empty. The
+# controller cache is the durable copy across runs from the same machine; the
+# node check is the recovery path for a fresh controller checkout.
+
+- name: Ensure controller-local cert cache directory exists
+  ansible.builtin.file:
+    path: "{{ es_certs_local_cache_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Check controller-local cert cache
+  ansible.builtin.stat:
+    path: "{{ es_certs_local_cache_dir }}/ca.crt"
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: _es_certs_cached
+
+- name: Check the Elasticsearch host for already-generated certs
+  ansible.builtin.stat:
+    path: "{{ elastic_base_dir }}/elasticsearch/certs/ca.crt"
+  delegate_to: "{{ groups['elasticsearch'][0] }}"
+  become: true
+  run_once: true
+  register: _es_certs_on_node
+
+- name: Generate certs (first run only)
+  run_once: true
+  delegate_to: "{{ groups['elasticsearch'][0] }}"
+  become: true
+  when: not _es_certs_cached.stat.exists and not _es_certs_on_node.stat.exists
+  block:
+    - name: Ensure unzip is present (elasticsearch-certutil --pem output is a zip)
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+
+    - name: Create certs directory (bind-mounted into the ES container)
+      ansible.builtin.file:
+        path: "{{ elastic_base_dir }}/elasticsearch/certs"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0750"
+
+    - name: Render instances.yml (SAN list for the node cert)
+      ansible.builtin.template:
+        src: instances.yml.j2
+        dest: "{{ elastic_base_dir }}/elasticsearch/certs/instances.yml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0640"
+
+    # Both certutil invocations bind-mount the same host certs/ directory into
+    # a throwaway container — no scratch dir, no docker cp shuffling. The CA
+    # files the unzip step extracts are immediately visible to the second
+    # `docker run` for free, via the same mount.
+    - name: Generate CA (PEM)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ elastic_base_dir }}/elasticsearch/certs:/certs"
+          - "{{ es_image }}"
+          - bin/elasticsearch-certutil
+          - ca
+          - --silent
+          - --pem
+          - --out
+          - /certs/ca.zip
+      changed_when: true
+
+    - name: Unzip CA
+      ansible.builtin.unarchive:
+        src: "{{ elastic_base_dir }}/elasticsearch/certs/ca.zip"
+        dest: "{{ elastic_base_dir }}/elasticsearch/certs"
+        remote_src: true
+
+    - name: Generate the node certificate (PEM), signed by the CA
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ elastic_base_dir }}/elasticsearch/certs:/certs"
+          - "{{ es_image }}"
+          - bin/elasticsearch-certutil
+          - cert
+          - --silent
+          - --pem
+          - --ca-cert
+          - /certs/ca/ca.crt
+          - --ca-key
+          - /certs/ca/ca.key
+          - --in
+          - /certs/instances.yml
+          - --out
+          - /certs/bundle.zip
+      changed_when: true
+
+    - name: Unzip node certificate bundle
+      ansible.builtin.unarchive:
+        src: "{{ elastic_base_dir }}/elasticsearch/certs/bundle.zip"
+        dest: "{{ elastic_base_dir }}/elasticsearch/certs"
+        remote_src: true
+
+    # Hard fail here, before anything is distributed, if the node cert does not
+    # actually chain to the CA. This caught a mismatched pair once under the
+    # older docker-cp-based design; the current shared-bind-mount approach
+    # structurally cannot reproduce that, but the check stays as cheap
+    # insurance against discovering it three plays later as an opaque TLS
+    # handshake error.
+    - name: Verify the node certificate chains to the CA
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - verify
+          - -CAfile
+          - "{{ elastic_base_dir }}/elasticsearch/certs/ca/ca.crt"
+          - "{{ elastic_base_dir }}/elasticsearch/certs/es-shared/es-shared.crt"
+      changed_when: false
+
+    - name: Flatten cert layout
+      ansible.builtin.copy:
+        src: "{{ elastic_base_dir }}/elasticsearch/certs/{{ item.src }}"
+        dest: "{{ elastic_base_dir }}/elasticsearch/certs/{{ item.dest }}"
+        remote_src: true
+        mode: "{{ item.mode }}"
+      loop:
+        - { src: "es-shared/es-shared.crt", dest: "node.crt", mode: "0644" }
+        - { src: "es-shared/es-shared.key", dest: "node.key", mode: "0644" }
+        - { src: "ca/ca.crt", dest: "ca.crt", mode: "0644" }
+
+    - name: Fetch generated certs down to the controller cache
+      ansible.builtin.fetch:
+        src: "{{ elastic_base_dir }}/elasticsearch/certs/{{ item }}"
+        dest: "{{ es_certs_local_cache_dir }}/{{ item }}"
+        flat: true
+      loop:
+        - ca.crt
+        - node.crt
+        - node.key
+
+- name: Push controller-cached certs onto the node (recovery path)
+  when: _es_certs_cached.stat.exists and not _es_certs_on_node.stat.exists
+  become: true
+  run_once: true
+  delegate_to: "{{ groups['elasticsearch'][0] }}"
+  block:
+    - name: Create certs directory
+      ansible.builtin.file:
+        path: "{{ elastic_base_dir }}/elasticsearch/certs"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0750"
+
+    - name: Copy cached certs into place
+      ansible.builtin.copy:
+        src: "{{ es_certs_local_cache_dir }}/{{ item }}"
+        dest: "{{ elastic_base_dir }}/elasticsearch/certs/{{ item }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"
+      loop:
+        - ca.crt
+        - node.crt
+        - node.key
+
+# Every host needs the CA, not just the stack host: each Elastic Agent
+# validates Fleet Server's and Elasticsearch's certificates against it.
+- name: Distribute the CA cert to every host
+  become: true
+  block:
+    - name: Create shared certs directory
+      ansible.builtin.file:
+        path: "{{ es_shared_certs_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0755"
+
+    - name: Copy CA cert
+      ansible.builtin.copy:
+        src: "{{ es_certs_local_cache_dir }}/ca.crt"
+        dest: "{{ es_shared_certs_dir }}/ca.crt"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"

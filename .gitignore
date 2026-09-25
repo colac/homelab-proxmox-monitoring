@@ -42,9 +42,22 @@ secrets/
 *.retry
 .ansible/
 ansible.log
-# Real inventory and any secret var files — keep only the .example
+# Real inventory — keep only the .example
 ansible/inventory/hosts.yml
+# Legacy: secrets moved to the SOPS-encrypted secrets.yaml at the repo root.
+# Kept ignored so an old local vault.yml can never be committed by accident.
 ansible/vault.yml
+# Terraform-generated inventory fragments. One per project; each holds the
+# DHCP address its VM happens to have, so they are machine state, not source.
+# group_vars/ is hand-authored and stays tracked.
+ansible/inventory/monitoring.yml
+# Generated Elastic material, cached controller-locally: the internal CA and
+# node certificate, and the Fleet service/enrollment tokens. Machine state, not
+# human-chosen secrets — those live in the ansible-vault file above. Losing
+# these is recoverable (the roles regenerate them against an empty cluster);
+# committing them would not be.
+ansible/.certs/
+ansible/.secrets-cache/
 
 # Python
 __pycache__/
@@ -81,6 +94,9 @@ yarn-error.log*
 .npm
 .eslintcache
 
+# Claude Code per-session allowlist, not shared policy
+.claude/settings.local.json
+
 # IDEs
 .vscode/
 .idea/
@@ -102,10 +118,30 @@ trivy-results.sarif
 *.cert
 *.p12
 *.pfx
-secrets.yml
-secrets.yaml
 .env
 .env.local
+
+# NOTE: secrets.yaml is deliberately ABSENT from this file. It is SOPS-
+# encrypted (see .sops.yaml) — ciphertext at rest — and is meant to be
+# committed alongside the code that consumes it; .gitleaks.toml allowlists it
+# for the same reason. Ignoring it here would silently prevent it from ever
+# being committed. Only the age PRIVATE key and any DECRYPTED copy must stay
+# out, which is what the two rules below cover.
+
+# age private key — lives at ~/.config/sops/age/keys.txt, but guard against
+# a stray copy landing in the repo.
+*.agekey
+keys.txt
+
+# Any accidental decrypted output of secrets.yaml
+*.decrypted
+*.dec.yaml
+secrets.dec.yaml
+
+# direnv
+.direnv/
+# Per-machine .envrc overrides, sourced by the tracked .envrc files if present
+.envrc.local
 
 # Temporary files
 *.tmp

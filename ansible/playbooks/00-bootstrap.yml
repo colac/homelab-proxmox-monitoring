@@ -1,0 +1,14 @@
+---
+- name: Preflight checks
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    # Verifies the Packer template baked in what Elasticsearch needs.
+    - common
+    # Moves /var/lib/docker onto the Terraform-attached data disk, under LVM.
+    # Runs here, before any play that starts a container, because migrating
+    # Docker's state means stopping Docker — cheap on a fresh host, disruptive
+    # once Nextcloud or Elasticsearch is running. Hosts with no data disk
+    # attached skip it and keep /var/lib/docker on the OS disk.
+    - docker_data

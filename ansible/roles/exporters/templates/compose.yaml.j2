@@ -1,0 +1,51 @@
+# Managed by Ansible (role: exporters) — do not edit by hand.
+#
+# Metrics ports bind to 127.0.0.1 deliberately: the Elastic Agent scrapes them
+# from this same host, so nothing on the LAN needs to reach them. The Graphite
+# ingest port is the exception — TrueNAS pushes to it from off-box.
+services:
+{% if exporters_truenas_enabled %}
+  graphite-exporter:
+    image: {{ exporters_graphite_image }}
+    container_name: exporter-graphite
+    init: true
+    restart: always
+    command:
+      - --graphite.mapping-config=/etc/graphite/graphite_mapping.conf
+      - --graphite.listen-address=:{{ exporters_graphite_ingest_port }}
+      - --web.listen-address=:{{ exporters_graphite_metrics_port }}
+      # Graphite metrics carry no staleness marker, so without an expiry a
+      # disconnected TrueNAS would keep serving its last values forever and
+      # every dashboard would look healthy while the NAS was off.
+      - --graphite.sample-expiry=10m
+    volumes:
+      - ./graphite/graphite_mapping.conf:/etc/graphite/graphite_mapping.conf:ro
+    ports:
+      - "127.0.0.1:{{ exporters_graphite_metrics_port }}:{{ exporters_graphite_metrics_port }}"
+      - "{{ exporters_graphite_ingest_port }}:{{ exporters_graphite_ingest_port }}/tcp"
+      - "{{ exporters_graphite_ingest_port }}:{{ exporters_graphite_ingest_port }}/udp"
+{% endif %}
+{% if exporters_nextcloud_enabled %}
+
+  nextcloud-exporter:
+    image: {{ exporters_nextcloud_image }}
+    container_name: exporter-nextcloud
+    init: true
+    restart: always
+    env_file:
+      - env-nextcloud
+    ports:
+      - "127.0.0.1:{{ exporters_nextcloud_port }}:{{ exporters_nextcloud_port }}"
+{% endif %}
+{% if exporters_pve_enabled %}
+
+  pve-exporter:
+    image: {{ exporters_pve_image }}
+    container_name: exporter-pve
+    init: true
+    restart: always
+    env_file:
+      - env-pve
+    ports:
+      - "127.0.0.1:{{ exporters_pve_port }}:9221"
+{% endif %}

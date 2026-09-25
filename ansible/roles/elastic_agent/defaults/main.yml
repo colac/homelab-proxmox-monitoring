@@ -1,0 +1,5 @@
+---
+# defaults file for elastic_agent
+# Verified against a live install (deb package, 9.4.2) — the .deb does NOT
+# use /etc/elastic-agent.yml; the real path is nested under /etc/elastic-agent/.
+elastic_agent_config_path: /etc/elastic-agent/elastic-agent.yml
