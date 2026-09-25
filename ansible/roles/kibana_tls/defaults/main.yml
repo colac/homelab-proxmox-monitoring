@@ -1,0 +1,16 @@
+---
+# defaults file for kibana_tls
+#
+# kibana_fqdn and kibana_tls_letsencrypt live in
+# inventory/group_vars/monitoring.yml, and acme_email and
+# cloudflare_dns_api_token in inventory/group_vars/all.yml — the kibana role
+# reads the first two to pick its certificate, and Caddy on the Nextcloud VM
+# shares the last two. Only this role's own knobs are here.
+
+# How long certbot waits after writing the _acme-challenge TXT record before
+# asking Let's Encrypt to check it. 30s is what the six-VM repo ran live with.
+kibana_tls_propagation_seconds: 30
+
+# Where certbot keeps the Cloudflare credentials. Root-only, outside the
+# Kibana project directory so the container never sees it.
+kibana_tls_cloudflare_ini: /etc/letsencrypt/cloudflare.ini

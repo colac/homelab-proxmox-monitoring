@@ -1,0 +1,6 @@
+---
+# defaults file for es_certs
+#
+# es_certs_local_cache_dir and es_shared_certs_dir are cross-role shared
+# vars — defined in inventory/group_vars/all.yml, not here, since they're
+# also read by the kibana/apm_server/elastic_agent roles later.

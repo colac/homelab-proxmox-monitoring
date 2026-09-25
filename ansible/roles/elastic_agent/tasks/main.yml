@@ -1,0 +1,117 @@
+---
+# tasks file for elastic_agent
+#
+# Runs on every host. The Packer template pre-installs the agent package and
+# leaves the service disabled (there is nothing to enroll against at build
+# time); this role brings the version into line with stack_version and enrolls
+# the host with Fleet.
+#
+# The version check doubles as the install path: an absent package makes
+# dpkg-query return empty, which never equals stack_version, so the block
+# below installs it from scratch. That is what makes this work on a VM cloned
+# from a template built before the agent was added to it.
+
+# Grafana Alloy was what the earlier Prometheus-based design used, and it is
+# baked into any VM cloned from a template built before this change. Leaving it
+# running would mean an agent retrying forever against a Prometheus endpoint
+# that no longer exists, filling the journal this stack now ships to
+# Elasticsearch. Stopped rather than purged: removing a package the template
+# installed is the template's job, not a playbook's.
+- name: Check whether Grafana Alloy is present from the previous design
+  ansible.builtin.stat:
+    path: /lib/systemd/system/alloy.service
+  register: _elastic_agent_alloy_unit
+
+- name: Stop and disable Grafana Alloy
+  ansible.builtin.systemd:
+    name: alloy
+    state: stopped
+    enabled: false
+  become: true
+  when: _elastic_agent_alloy_unit.stat.exists
+
+- name: Check installed Elastic Agent version
+  ansible.builtin.command: dpkg-query -W -f='${Version}' elastic-agent
+  register: _elastic_agent_installed_version
+  changed_when: false
+  failed_when: false
+
+- name: Install or reinstall Elastic Agent when its version differs from stack_version
+  when: _elastic_agent_installed_version.stdout != stack_version
+  become: true
+  block:
+    - name: Determine dpkg architecture
+      ansible.builtin.command: dpkg --print-architecture
+      register: _elastic_agent_dpkg_arch
+      changed_when: false
+
+    - name: Download the pinned Elastic Agent .deb
+      ansible.builtin.get_url:
+        url: "https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-{{ stack_version }}-{{ _elastic_agent_dpkg_arch.stdout }}.deb"
+        dest: "/tmp/elastic-agent-{{ stack_version }}-{{ _elastic_agent_dpkg_arch.stdout }}.deb"
+        mode: "0644"
+
+    - name: Install the pinned Elastic Agent .deb
+      ansible.builtin.apt:
+        deb: "/tmp/elastic-agent-{{ stack_version }}-{{ _elastic_agent_dpkg_arch.stdout }}.deb"
+
+    - name: Remove the downloaded .deb
+      ansible.builtin.file:
+        path: "/tmp/elastic-agent-{{ stack_version }}-{{ _elastic_agent_dpkg_arch.stdout }}.deb"
+        state: absent
+
+# A Fleet agent belongs to exactly one policy. The monitoring host gets its own
+# because it is the only one that should run the Prometheus integration against
+# the exporters sitting beside it.
+- name: Determine this host's Fleet agent policy and enrollment token file
+  ansible.builtin.set_fact:
+    _elastic_agent_policy_id: >-
+      {{ monitoring_agent_policy_id if ('monitoring' in group_names) else homelab_agents_policy_id }}
+    _elastic_agent_token_file: >-
+      {{ 'monitoring_agent_enrollment_token.txt' if ('monitoring' in group_names)
+         else 'homelab_agents_enrollment_token.txt' }}
+
+# Self-contained marker for idempotency, deliberately not inferring enrollment
+# state from Elastic's own internal files (fragile, undocumented shape) or from
+# a live Fleet API lookup (more moving parts than needed) — the same cache-once
+# idiom used by es_certs and fleet_bootstrap.
+- name: Check for the Fleet enrollment marker
+  ansible.builtin.stat:
+    path: /etc/elastic-agent/.fleet-enrolled
+  register: _elastic_agent_enrolled_marker
+  become: true
+
+# `elastic-agent enroll` needs the daemon already running: it signals it over
+# the control socket at /var/lib/elastic-agent/elastic-agent.sock to reload the
+# new config live. Stopping the service first removes that socket and
+# enrollment fails outright trying to reach a daemon that was never there
+# ("connect: no such file or directory"). So it must start before enrolling,
+# not after.
+- name: Ensure Elastic Agent is enabled and running
+  ansible.builtin.systemd:
+    name: elastic-agent
+    enabled: true
+    state: started
+  become: true
+
+- name: Enroll as a Fleet-managed agent
+  when: not _elastic_agent_enrolled_marker.stat.exists
+  become: true
+  block:
+    - name: Enroll Elastic Agent with Fleet Server
+      ansible.builtin.command:
+        argv:
+          - elastic-agent
+          - enroll
+          - "--url=https://{{ hostvars[groups['kibana'][0]].ansible_host }}:{{ fleet_server_port }}"
+          - "--enrollment-token={{ lookup('file', es_secrets_local_cache_dir ~ '/' ~ _elastic_agent_token_file | trim) }}"
+          - "--certificate-authorities={{ es_shared_certs_dir }}/ca.crt"
+          - -f
+      no_log: true
+      changed_when: true
+
+    - name: Mark this host as Fleet-enrolled
+      ansible.builtin.file:
+        path: /etc/elastic-agent/.fleet-enrolled
+        state: touch
+        mode: "0600"

@@ -1,0 +1,22 @@
+---
+# Sets the kibana_system password and applies the single-node zero-replica
+# override, before Kibana and Fleet have created any data streams.
+#
+# run_once rather than `hosts: groups['elasticsearch'][0]`: both target the
+# first node, but a group name here keeps the play resolvable without an
+# inventory (ansible-lint cannot evaluate the subscript form), and run_once is
+# the clearer statement of intent anyway — this is cluster-wide setup, not
+# per-node configuration.
+- name: Bootstrap Elasticsearch security
+  hosts: elasticsearch
+  become: true
+  gather_facts: true
+  tasks:
+    # noqa run-once[task] — the warning is about the `free` strategy, which
+    # this repo never sets (ansible.cfg leaves the default `linear`). With one
+    # Elasticsearch node it is a no-op either way; it stays as documentation of
+    # intent for the day there is a second.
+    - name: Apply the cluster-wide security bootstrap  # noqa: run-once[task]
+      ansible.builtin.include_role:
+        name: es_security_bootstrap
+      run_once: true

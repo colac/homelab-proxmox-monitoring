@@ -5,3 +5,12 @@ collections:
     version: ">=3.10.0"
   - name: ansible.posix
     version: ">=1.5.0"
+  # lvg / lvol / filesystem, used by the docker_data role to put
+  # /var/lib/docker on its own LVM volume.
+  #
+  # The upper bound is load-bearing: 13.x declares requires_ansible >=2.18 and
+  # ansible-lint warns that it does not support the ansible-core 2.17.14 the
+  # Makefile pins. 12.x is the newest line that still declares >=2.17.0. Raise
+  # both together or not at all.
+  - name: community.general
+    version: ">=10.0.0,<13.0.0"

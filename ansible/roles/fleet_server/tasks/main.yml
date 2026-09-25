@@ -1,0 +1,63 @@
+---
+# tasks file for fleet_server
+#
+# Fleet Server's own TLS listener (port 8220, what the six Elastic Agents
+# will eventually connect to) reuses the internal CA es_certs already
+# generates and distributes — its SAN list already covers the Kibana
+# host's inventory name and ansible_host IP (see
+# ansible/roles/es_certs/templates/instances.yml.j2), so the node
+# cert/key just need copying onto this host from the controller-local
+# cache, the same way es_certs already pushes them onto ES nodes.
+
+- name: Create Fleet Server project + certs directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  loop:
+    - "{{ elastic_base_dir }}/fleet-server"
+    - "{{ elastic_base_dir }}/fleet-server/certs"
+  become: true
+
+- name: Copy node cert + key + CA from the controller-local cache
+  ansible.builtin.copy:
+    src: "{{ es_certs_local_cache_dir }}/{{ item.src }}"
+    dest: "{{ elastic_base_dir }}/fleet-server/certs/{{ item.dest }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  loop:
+    - { src: "node.crt", dest: "server.crt" }
+    - { src: "node.key", dest: "server.key" }
+    - { src: "ca.crt", dest: "ca.crt" }
+  become: true
+  notify: Restart fleet-server
+
+- name: Render docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ elastic_base_dir }}/fleet-server/docker-compose.yml"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  become: true
+  notify: Restart fleet-server
+
+- name: Render .env
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ elastic_base_dir }}/fleet-server/.env"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0640"
+  become: true
+  no_log: true
+  notify: Restart fleet-server
+
+- name: Bring up Fleet Server
+  community.docker.docker_compose_v2:
+    project_src: "{{ elastic_base_dir }}/fleet-server"
+    state: present
+  become: true

@@ -1,0 +1,13 @@
+---
+# fleet_bootstrap scripts the Kibana-side setup (policies, integrations,
+# tokens) and must complete before fleet_server starts — the container needs
+# the service token that bootstrap mints.
+- name: Bootstrap Fleet and deploy Fleet Server
+  hosts: kibana
+  become: true
+  gather_facts: true
+  roles:
+    - role: fleet_bootstrap
+      when: fleet_server_enabled | default(false) | bool
+    - role: fleet_server
+      when: fleet_server_enabled | default(false) | bool

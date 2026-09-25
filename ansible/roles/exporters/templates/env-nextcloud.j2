@@ -1,0 +1,9 @@
+# Managed by Ansible (role: exporters) — do not edit by hand.
+TZ=Europe/Lisbon
+
+# Token auth, not username/password: the serverinfo endpoint accepts a
+# dedicated token, so no credential that can actually sign in lives on this VM.
+NEXTCLOUD_SERVER={{ exporters_nextcloud_server }}
+NEXTCLOUD_AUTH_TOKEN={{ exporters_nextcloud_token }}
+NEXTCLOUD_LISTEN_ADDRESS=:{{ exporters_nextcloud_port }}
+NEXTCLOUD_TIMEOUT=10s

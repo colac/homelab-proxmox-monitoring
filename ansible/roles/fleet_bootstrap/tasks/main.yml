@@ -1,0 +1,480 @@
+---
+# tasks file for fleet_bootstrap
+#
+# Runs once against the Kibana host. Scripts the Fleet setup a human would
+# otherwise click through the UI wizard for: Fleet's own initialisation, the
+# default output, the Fleet Server policy and host registration, the two agent
+# policies with their integrations, and the enrollment tokens.
+#
+# Ported from homelab-proxmox-elastic. The APM policy and package policy are
+# gone (no APM here); in their place the monitoring host gets a Prometheus
+# integration pointed at the exporters running alongside it.
+#
+# force_basic_auth: true on every call — Kibana's API does not send a
+# WWW-Authenticate challenge the way Elasticsearch's does, so
+# ansible.builtin.uri's default lazy-auth flow never attaches credentials on
+# the first request and every call 401s with no auth header sent at all.
+# Verified empirically.
+#
+# Idempotency: every create is guarded by a GET-by-id first, using fixed IDs
+# rather than name matching. PUTs are unguarded because they are idempotent by
+# nature and also retrofit settings onto objects created before those settings
+# existed.
+
+- name: Wait for Kibana API status
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/status"
+    validate_certs: false
+    return_content: true
+  register: _fleet_bootstrap_kibana
+  until: _fleet_bootstrap_kibana.status == 200
+  retries: 30
+  delay: 10
+  # ansible.builtin.uri does not support check mode at all — any invocation is
+  # skipped under --check, not just mutating ones. Force this read-only GET to
+  # actually run, since the GET-by-id guards below need it to have happened.
+  check_mode: false
+
+- name: Initialize Fleet in Kibana (POST /api/fleet/setup — safe to re-run)
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/setup"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body: {}
+    status_code: 200
+  no_log: true
+
+# POST /api/fleet/setup auto-creates a default output pointed at plain
+# http://localhost:9200 — wrong for a secured HTTPS cluster with a private CA.
+# Every Fleet-managed agent ships through whichever output its policy resolves
+# to, and policies fall back to the account-wide default, so without this every
+# agent silently fails to deliver anything. This was found live on the
+# multi-VM cluster, not by inspection: metrics-system.* and metrics-docker.*
+# data streams simply never got created, and a plain HTTP request to an
+# HTTPS-only port returns "Empty reply from server" — the exact shape of the
+# "EOF" errors the agents reported.
+- name: Point Fleet's default output at the real ES endpoint over HTTPS
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/outputs/fleet-default-output"
+    method: PUT
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      name: default
+      type: elasticsearch
+      hosts: >-
+        {{ groups['elasticsearch']
+           | map('extract', hostvars, 'ansible_host')
+           | map('regex_replace', '^', 'https://')
+           | map('regex_replace', '$', ':' ~ es_http_port)
+           | list }}
+      ssl:
+        certificate_authorities:
+          - "{{ lookup('file', es_certs_local_cache_dir ~ '/ca.crt') }}"
+    status_code: 200
+  no_log: true
+
+# ---------------------------------------------------------------------------
+# Agent policies
+# ---------------------------------------------------------------------------
+
+- name: Check for an existing Fleet Server agent policy
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies/{{ fleet_server_policy_id }}"
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: _fleet_bootstrap_fleet_policy_check
+  no_log: true
+  check_mode: false
+
+- name: Create the Fleet Server agent policy
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies?sys_monitoring=false"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      id: "{{ fleet_server_policy_id }}"
+      name: "Fleet Server Policy"
+      namespace: default
+      has_fleet_server: true
+      is_default_fleet_server: true
+      monitoring_enabled: [logs, metrics]
+    status_code: 200
+  when: _fleet_bootstrap_fleet_policy_check.status == 404
+  no_log: true
+
+# monitoring_enabled has to be set explicitly on every policy or Kibana shows
+# the agent's own Logs and Metrics tabs as disabled, even while the System and
+# Docker integrations collect normally. PUT requires the full body, not a
+# partial patch.
+- name: Ensure agent monitoring is enabled on the Fleet Server policy
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies/{{ fleet_server_policy_id }}"
+    method: PUT
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      name: "Fleet Server Policy"
+      namespace: default
+      monitoring_enabled: [logs, metrics]
+    status_code: 200
+  no_log: true
+
+- name: Check for an existing Fleet Server host registration
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/fleet_server_hosts/{{ fleet_server_host_id }}"
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: _fleet_bootstrap_fleet_host_check
+  no_log: true
+  check_mode: false
+
+- name: Register the Fleet Server host
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/fleet_server_hosts"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      id: "{{ fleet_server_host_id }}"
+      name: "Fleet Server"
+      host_urls:
+        - "https://{{ ansible_host }}:{{ fleet_server_port }}"
+      is_default: true
+    status_code: 200
+  when: _fleet_bootstrap_fleet_host_check.status == 404
+  no_log: true
+
+# Two agent policies, because a Fleet agent belongs to exactly one. The
+# monitoring host needs the Prometheus integration to scrape the exporters
+# running beside it; no other host should, so it cannot share the general one.
+- name: Check for existing agent policies
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies/{{ item.id }}"
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  loop: "{{ _fleet_bootstrap_agent_policies }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: _fleet_bootstrap_policy_checks
+  no_log: true
+  check_mode: false
+
+- name: Create missing agent policies
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies?sys_monitoring=false"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      id: "{{ item.item.id }}"
+      name: "{{ item.item.name }}"
+      namespace: default
+      monitoring_enabled: [logs, metrics]
+    status_code: 200
+  loop: "{{ _fleet_bootstrap_policy_checks.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+  when: item.status == 404
+  no_log: true
+
+- name: Ensure agent monitoring is enabled on both agent policies
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies/{{ item.id }}"
+    method: PUT
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      namespace: default
+      monitoring_enabled: [logs, metrics]
+    status_code: 200
+  loop: "{{ _fleet_bootstrap_agent_policies }}"
+  loop_control:
+    label: "{{ item.id }}"
+  no_log: true
+
+# ---------------------------------------------------------------------------
+# Integration packages
+# ---------------------------------------------------------------------------
+
+# Package versions are looked up live rather than pinned: they drift
+# independently of stack_version. A loop is safe here (unlike the package
+# policies below) because each iteration is self-contained and identically
+# shaped, with no cross-loop index correlation.
+- name: Look up the current version of each Fleet integration package
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/epm/packages/{{ item }}"
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    status_code: 200
+  loop: "{{ _fleet_bootstrap_packages }}"
+  register: _fleet_bootstrap_package_lookup
+  no_log: true
+  check_mode: false
+
+- name: Install Fleet integration packages not yet installed
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/epm/packages/{{ item.item }}/{{ item.json.item.version }}"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body: {}
+    status_code: 200
+  loop: "{{ _fleet_bootstrap_package_lookup.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.json.item.status != 'installed'
+  no_log: true
+
+# ---------------------------------------------------------------------------
+# Package policies (integrations attached to an agent policy)
+#
+# System and Docker are homogeneous — same inputs, differing only in which
+# policy they attach to — so they loop. The Prometheus one is written out
+# separately below because its inputs are entirely different in shape.
+#
+# inputs: {} means "Fleet's own default integration config", which is what we
+# want for System and Docker.
+# ---------------------------------------------------------------------------
+
+- name: Check for existing System and Docker package policies
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/{{ item.0.package }}-{{ item.1.slug }}"
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  loop: "{{ [{'package': 'system'}, {'package': 'docker'}] | product(_fleet_bootstrap_agent_policies) | list }}"
+  loop_control:
+    label: "{{ item.0.package }}-{{ item.1.slug }}"
+  register: _fleet_bootstrap_base_pkgpolicy_checks
+  no_log: true
+  check_mode: false
+
+- name: Create the System and Docker package policies
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      id: "{{ item.item.0.package }}-{{ item.item.1.slug }}"
+      name: "{{ item.item.0.package }}-{{ item.item.1.slug }}"
+      policy_ids: ["{{ item.item.1.id }}"]
+      package:
+        name: "{{ item.item.0.package }}"
+        version: "{{ (_fleet_bootstrap_package_lookup.results | selectattr('item', 'equalto', item.item.0.package) | first).json.item.version }}"
+      inputs: {}
+    status_code: 200
+  loop: "{{ _fleet_bootstrap_base_pkgpolicy_checks.results }}"
+  loop_control:
+    label: "{{ item.item.0.package }}-{{ item.item.1.slug }}"
+  when: item.status == 404
+  no_log: true
+
+- name: Check for an existing Prometheus package policy
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/prometheus-exporters"
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: _fleet_bootstrap_prometheus_pkgpolicy_check
+  no_log: true
+  check_mode: false
+
+# The input key is "{policy_template.name}-{input.type}" — verified against the
+# published package manifest (epr.elastic.co/package/prometheus/<version>/),
+# not guessed. On the multi-VM stack the equivalent guess for APM cost real
+# debugging time: the intuitive "apm" and "apmserver" both 400 with
+# "Input not found".
+#
+# `hosts` is a multi-valued var, so every plain /metrics exporter shares one
+# package policy and one scrape schedule. The agent tags each document with
+# service.address, which is what distinguishes TrueNAS metrics from Nextcloud
+# ones downstream.
+- name: Create the Prometheus package policy for the exporters
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      id: prometheus-exporters
+      name: prometheus-exporters
+      policy_ids: ["{{ monitoring_agent_policy_id }}"]
+      package:
+        name: prometheus
+        version: "{{ (_fleet_bootstrap_package_lookup.results | selectattr('item', 'equalto', 'prometheus') | first).json.item.version }}"
+      inputs:
+        prometheus-prometheus/metrics:
+          enabled: true
+          streams:
+            prometheus.collector:
+              enabled: true
+              vars:
+                hosts: "{{ _fleet_bootstrap_prometheus_targets }}"
+                metrics_path: /metrics
+                period: "{{ exporters_scrape_period }}"
+    status_code: 200
+  when:
+    - _fleet_bootstrap_prometheus_pkgpolicy_check.status == 404
+    - _fleet_bootstrap_prometheus_targets | length > 0
+  no_log: true
+
+# ---------------------------------------------------------------------------
+# Enrollment tokens and the Fleet Server service token
+# ---------------------------------------------------------------------------
+
+- name: Ensure the secrets cache directory exists
+  ansible.builtin.file:
+    path: "{{ es_secrets_local_cache_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Check for a cached Fleet Server service token
+  ansible.builtin.stat:
+    path: "{{ es_secrets_local_cache_dir }}/fleet_server_service_token.txt"
+  delegate_to: localhost
+  become: false
+  register: _fleet_bootstrap_service_token_cached
+
+- name: Mint the elastic/fleet-server service account token
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ es_http_port }}/_security/service/elastic/fleet-server/credential/token/fleet-server-token"
+    method: POST
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    ca_path: "{{ elastic_base_dir }}/elasticsearch/certs/ca.crt"
+    status_code: 200
+  register: _fleet_bootstrap_service_token
+  delegate_to: "{{ groups['elasticsearch'][0] }}"
+  no_log: true
+  when: not _fleet_bootstrap_service_token_cached.stat.exists
+
+- name: Cache the Fleet Server service token
+  ansible.builtin.copy:
+    content: "{{ _fleet_bootstrap_service_token.json.token.value }}"
+    dest: "{{ es_secrets_local_cache_dir }}/fleet_server_service_token.txt"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  # The mint task above is a POST and is correctly skipped under --check,
+  # which leaves _fleet_bootstrap_service_token an empty skip result that .json cannot be
+  # dereferenced on. Real runs are unaffected.
+  when: not _fleet_bootstrap_service_token_cached.stat.exists and not ansible_check_mode
+
+- name: Check for cached enrollment tokens
+  ansible.builtin.stat:
+    path: "{{ es_secrets_local_cache_dir }}/{{ item.token_file }}"
+  loop: "{{ _fleet_bootstrap_agent_policies }}"
+  loop_control:
+    label: "{{ item.token_file }}"
+  delegate_to: localhost
+  become: false
+  register: _fleet_bootstrap_enrollment_cached
+
+- name: Mint the missing enrollment tokens
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/enrollment_api_keys"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      name: "{{ item.item.id }}-enrollment"
+      policy_id: "{{ item.item.id }}"
+    status_code: 200
+  loop: "{{ _fleet_bootstrap_enrollment_cached.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+  when: not item.stat.exists
+  register: _fleet_bootstrap_enrollment_minted
+  no_log: true
+
+- name: Cache the enrollment tokens
+  ansible.builtin.copy:
+    content: "{{ item.json.item.api_key }}"
+    dest: "{{ es_secrets_local_cache_dir }}/{{ item.item.item.token_file }}"
+    mode: "0600"
+  loop: "{{ _fleet_bootstrap_enrollment_minted.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item.token_file | default('skipped') }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: not (item.skipped | default(false)) and not ansible_check_mode

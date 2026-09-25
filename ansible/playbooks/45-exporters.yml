@@ -1,0 +1,10 @@
+---
+# Deliberately before the agents: the Prometheus integration starts scraping
+# the moment an agent picks up its policy, so the exporters should already be
+# answering.
+- name: Deploy the Prometheus exporters
+  hosts: monitoring
+  become: true
+  gather_facts: true
+  roles:
+    - exporters

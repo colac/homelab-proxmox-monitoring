@@ -1,0 +1,6 @@
+---
+- name: Restart fleet-server
+  community.docker.docker_compose_v2:
+    project_src: "{{ elastic_base_dir }}/fleet-server"
+    state: restarted
+  become: true

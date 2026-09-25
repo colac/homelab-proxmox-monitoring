@@ -1,0 +1,12 @@
+---
+- name: Deploy Kibana
+  hosts: kibana
+  become: true
+  gather_facts: true
+  roles:
+    # Before kibana, in the same play: the container mounts the certificate,
+    # so it has to be on disk before Kibana first starts, and a renewed one
+    # installed here notifies the kibana role's restart handler.
+    - role: kibana_tls
+      when: kibana_tls_letsencrypt | default(false) | bool
+    - kibana

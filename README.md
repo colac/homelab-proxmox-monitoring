@@ -8,10 +8,17 @@ Heavily "inspired" by
 <https://github.com/bcochofel/homelab-proxmox-core/tree/main>.
 
 - **New here?** Read the strategy and architecture below.
-- **Want to deploy something?** [NEXTCLOUD.md](NEXTCLOUD.md) is the complete
-  from-zero runbook for the flagship deployment.
+- **Want to deploy something?** [NEXTCLOUD.md](NEXTCLOUD.md) and
+  [MONITORING.md](MONITORING.md) are the complete from-zero runbooks for the
+  two deployments.
 - **Working on one component?** Each folder has its own README — see
   [Repository map](#repository-map).
+- **What is done and what is not?** [TODO.md](TODO.md) is the single status
+  tracker.
+
+This is a monorepo: one `make install`, one Packer template, one Ansible
+playbook tree, and one Terraform project per VM. `ansible-playbook
+playbooks/site.yml` redeploys everything below from scratch.
 
 ## Deployment strategy
 
@@ -23,7 +30,8 @@ next one consumes.
 ┌──────────┐  bakes    ┌─────────────────────┐
 │  Packer  │──────────▶│ ubuntu-24.04-       │  Proxmox VM template:
 │          │           │ template            │  hardened Ubuntu 24.04 LTS,
-└──────────┘           └─────────────────────┘  Docker + Tailscale, sealed
+└──────────┘           └─────────────────────┘  Docker, Tailscale, Elastic
+                                                Agent (disabled), sealed
                                   │
 ┌───────────┐  clones             ▼
 │ Terraform │──────────▶┌─────────────────────┐  VM sized per project,
@@ -38,7 +46,7 @@ next one consumes.
 
 | Stage | Owns | Re-run when |
 |---|---|---|
-| **Packer** | The golden image: OS, hardening, Docker, Tailscale binaries | The base OS or baked-in tooling changes (rare) |
+| **Packer** | The golden image: OS, hardening, Docker, Tailscale, the Elastic Agent package, and the Elasticsearch OS prerequisites | The base OS or baked-in tooling changes (rare) |
 | **Terraform** | VM existence and shape: CPU/RAM/disk, network, cloud-init user | You resize, add, or destroy a VM |
 | **Ansible** | Everything running *inside* the VM, and its config | Any app/config change (often — it is idempotent) |
 
@@ -81,22 +89,29 @@ depends on (none of which this repo provisions):
                         │  outbound only: Cloudflare DNS-01 (ACME)
                         │  no inbound ports, no public ingress
                         ▼
-┌───────────────────────────────────────────────────────────┐
-│ LAN 192.168.1.0/24                                        │
-│                                                           │
-│  ┌─────────────────────────┐      ┌────────────────────┐  │
-│  │ Proxmox VE (pve)        │      │ TrueNAS            │  │
-│  │  ├─ ubuntu-24.04-       │      │  ZFS mirror        │  │
-│  │  │  template  (Packer)  │      │  SMB: media        │  │
-│  │  ├─ VM: nextcloud       │◀────▶│   ├─ Familia (ro)  │  │
-│  │  │   ├─ Caddy (TLS)     │ SMB  │   └─ <user> dirs   │  │
-│  │  │   └─ Nextcloud AIO   │      └────────────────────┘  │
-│  │  └─ VM: k3s             │                              │
-│  └─────────────────────────┘      ┌────────────────────┐  │
-│              ▲                    │ PiHole             │  │
-│              └────────────────────│  local DNS records │  │
-│                                   └────────────────────┘  │
-└───────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ LAN 192.168.1.0/24                                           │
+│                                                              │
+│  ┌──────────────────────────────┐     ┌───────────────────┐  │
+│  │ Proxmox VE (pve)             │     │ TrueNAS           │  │
+│  │  ├─ ubuntu-24.04-template    │     │  ZFS mirror       │  │
+│  │  │     (Packer)              │ SMB │  SMB: media       │  │
+│  │  ├─ VM: nextcloud  ◀─────────┼────▶│   ├─ Familia (ro) │  │
+│  │  │    ├─ Caddy (TLS)         │     │   └─ <user> dirs  │  │
+│  │  │    ├─ Nextcloud AIO       │     │                   │  │
+│  │  │    └─ elastic-agent ──┐   │     │  netdata ───┐     │  │
+│  │  │                       │   │     └─────────────┼─────┘  │
+│  │  ├─ VM: monitoring       │   │      metrics+logs │        │
+│  │  │    ├─ Elasticsearch ◀─┘   │         graphite  │        │
+│  │  │    ├─ Fleet Server        │                   │        │
+│  │  │    ├─ Kibana              │                   │        │
+│  │  │    └─ exporters ◀─────────┼───────────────────┘        │
+│  │  └─ VM: k3s                  │                            │
+│  └──────────────────────────────┘     ┌───────────────────┐  │
+│              ▲                        │ PiHole            │  │
+│              └────────────────────────│  local DNS records│  │
+│                                       └───────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
                         ▲
                         │ Tailscale subnet route + split-DNS
                    Off-LAN devices
@@ -117,21 +132,45 @@ depends on (none of which this repo provisions):
 
 | Path | What it is | Doc |
 |---|---|---|
-| `packer/ubuntu-24.04/` | Base template build (`proxmox-iso` builder) | [packer/README.md](packer/README.md) |
+| `packer/ubuntu-24.04/` | Base template build (`proxmox-iso` builder) — what everything deployed was cloned from | [packer/README.md](packer/README.md) |
+| `packer/ubuntu-26.04/` | The same build on 26.04 LTS; nothing clones from it until a project's `template_name` changes | [packer/README.md](packer/README.md) |
 | `terraform/modules/base-vm/` | Shared module: clone a template into a VM | [modules/base-vm/README.md](terraform/modules/base-vm/README.md) |
 | `terraform/projects/` | One folder per VM = one TFC workspace + state | [terraform/README.md](terraform/README.md) |
-| `ansible/` | Playbook + roles that configure the running VMs | [ansible/README.md](ansible/README.md) |
+| `ansible/` | Playbooks + roles that configure the running VMs | [ansible/README.md](ansible/README.md) |
 | `scripts/` | Standalone ops helpers (disk vetting); not pipeline | [scripts/README.md](scripts/README.md) |
 | `TrueNAS/` | NAS install + post-install hardening notes | [TrueNAS/README.md](TrueNAS/README.md) |
 | `NEXTCLOUD.md` | End-to-end runbook for the Nextcloud deployment | — |
+| `MONITORING.md` | End-to-end runbook for the monitoring deployment | — |
+| `TODO.md` | Status tracker for every deployment and open item | — |
 | `Makefile` | Installs pinned tooling; `make help` lists targets | — |
+| `secrets.yaml` | Every credential, SOPS-encrypted — committed as ciphertext | [see below](#secrets) |
+| `secrets.yaml.example` | Plaintext reference for the keys inside it | — |
+| `.envrc` (+ one per tool dir) | direnv: decrypt once, export per directory | [see below](#secrets) |
 
 ## Deployments
 
 | Deployment | Terraform project | Ansible roles | Status |
 |---|---|---|---|
 | **Nextcloud** — AIO behind Caddy, TrueNAS storage, Tailscale reach | `projects/nextcloud` | `tailscale`, `nextcloud_aio`, `reverse_proxy` | Live — [runbook](NEXTCLOUD.md) |
+| **Monitoring** — the Elastic Stack (single-node Elasticsearch, Kibana, Fleet) on one VM, watching Nextcloud and TrueNAS | `projects/monitoring` | `es_certs`, `elasticsearch`, `es_security_bootstrap`, `kibana_tls`, `kibana`, `fleet_bootstrap`, `fleet_server`, `exporters`, `elastic_agent` | Built, not yet run live — [runbook](MONITORING.md) |
 | **k3s** — single-node Kubernetes VM | `projects/k3s` | — (none yet) | VM only |
+
+### Why the Elastic Stack, on one VM
+
+A six-VM version of this exists in a separate repo
+(`homelab-proxmox-elastic`) — Elasticsearch × 3, Kibana with Fleet, an APM
+server, an OpenTelemetry demo. It works, and it is the better teaching
+artefact. It also costs six VMs and roughly 12 GB, which is more than this
+32 GB mini-PC has spare alongside Nextcloud.
+
+The deployment here is the **same stack with the topology collapsed onto one
+VM**: single-node Elasticsearch, Kibana and Fleet Server together, 8 GB. Most
+of the role code is ported directly from that repo. APM, tracing and the OTel
+demo were given up to fit; full-text log search, Fleet-managed agents and the
+path to OSQuery and Elastic Security were not.
+
+Keep it that way — if a change needs a second VM, it belongs in the other
+repo. The full comparison is in [MONITORING.md](MONITORING.md).
 
 ## Toolchain
 
@@ -144,9 +183,16 @@ make install           # tools + git hooks
 ./install-packer.sh    # Packer is installed separately
 ```
 
-Two gotchas that cause most "command not found" reports:
+`direnv` and `age` are the two exceptions: install them from the OS package
+manager (`apt-get install direnv age`, then hook direnv into your shell), since
+one hooks the shell and the other holds a key outside the repo. `make install`
+checks for both and refuses to run `direnv allow` without them.
 
-- **Ansible lives only in the venv** — `source .venv/bin/activate` first.
+Gotchas that cause most "command not found" reports:
+
+- **Ansible lives only in the venv.** The root `.envrc` puts `.venv/bin` on
+  `PATH`, so with direnv active `ansible-playbook` just works; without it,
+  `source .venv/bin/activate` first.
 - **Node is via nvm** — run `export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"`
   before `npx`.
 
@@ -157,20 +203,65 @@ bump them casually.
 
 ## Secrets
 
-Every file holding a real secret is git-ignored; only its `.example` twin is
-tracked. Copy the example, fill it in, and the real file stays local.
+**One encrypted file, decrypted once, delivered per directory.** Every
+credential the three tools need lives in `secrets.yaml` at the repo root,
+encrypted with [SOPS](https://github.com/getsops/sops) using an
+[age](https://github.com/FiloSottile/age) key. SOPS encrypts *values in place*,
+so the file on disk — and in git — is ciphertext. Unlike most `secrets.*`
+conventions, **it is meant to be committed**; `.gitleaks.toml` allowlists it for
+exactly that reason, and `.gitignore` deliberately does *not* list it.
 
-| Real file (ignored) | Holds |
+[direnv](https://direnv.net) turns that file into environment variables when you
+`cd`. The root `.envrc` decrypts once; each tool directory inherits via
+`source_up` and remaps only what that tool needs:
+
+| You `cd` into | direnv exports | Read by |
+|---|---|---|
+| repo root | `SOPS_AGE_KEY_FILE`, every key in `secrets.yaml`, `PROXMOX_ENDPOINT`, `PROXMOX_NODE`, `PROXMOX_TLS_INSECURE`; adds `.venv/bin` to `PATH` | — |
+| `packer/` | `PKR_VAR_*` (API URL, Packer token, node, TLS flag, console password hash, and the deploy key's public half read from `~/.ssh`) | `packer build` |
+| `terraform/` (and every project under it) | `TF_TOKEN_app_terraform_io`, `TF_VAR_pm_api_*`, `TF_VAR_pm_tls_insecure` | `terraform apply` |
+| `ansible/` | `ANSIBLE_CONFIG` plus the app secrets, read back with `lookup('env', …)` in `inventory/group_vars/` | `ansible-playbook` |
+
+The consequence is that **no `*.tfvars` or `*.pkrvars.hcl` file is needed at
+all**, and there is no vault password to type: `terraform apply`,
+`packer build` and `ansible-playbook` each work bare, from their own directory.
+The `.example` files that remain are optional non-secret overrides.
+
+```bash
+age-keygen -o ~/.config/sops/age/keys.txt   # first time only
+chmod 600 ~/.config/sops/age/keys.txt       # then add the age1… public key
+                                            # to .sops.yaml as a recipient
+sops secrets.yaml       # decrypt -> $EDITOR -> re-encrypt on save
+sops -d secrets.yaml    # print decrypted (read-only)
+make direnv-allow       # after editing ANY .envrc — direnv blocks a changed
+                        # one until re-approved. Editing secrets.yaml needs
+                        # nothing: it reloads on the next cd, or `direnv reload`
+```
+
+See [`secrets.yaml.example`](secrets.yaml.example) for every key and what it is
+for — it is the tracked, readable reference, since a reader without the age key
+cannot see inside the encrypted file.
+
+**What still stays out of git entirely:**
+
+| Path | Why |
 |---|---|
-| `packer/ubuntu-24.04/variables.pkrvars.hcl` | Proxmox API token, console password hash |
-| `terraform/projects/*/terraform.tfvars` | Proxmox API token, SSH key path |
-| `ansible/inventory/hosts.yml` | VM addresses |
-| `ansible/vault.yml` | **ansible-vault encrypted**: NAS SMB credentials, per-user app passwords, Cloudflare DNS token, Tailscale auth key, plus private-but-not-secret values (public domain, ACME email) |
+| `~/.config/sops/age/keys.txt` | The age **private** key. Everything else is recoverable; this is not. |
+| `~/.ssh/homelab-proxmox` | Deploy key, private half. Public halves may appear in tracked files; private keys never get committed. |
+| `ansible/inventory/hosts.yml` | VM addresses (hand-authored) |
+| `ansible/inventory/monitoring.yml` | VM address, **generated by Terraform** |
+| `ansible/.certs/` | Internal Elastic CA, node certificate and key — **generated**, not human-chosen |
+| `ansible/.secrets-cache/` | Fleet service token and enrollment API keys — **minted** by the API |
 
-Rules: passwords go in `vault.yml`, never in `group_vars` or role defaults.
-SSH **private** keys stay in `~/.ssh/` (the deploy key is
-`~/.ssh/homelab-proxmox`) — public keys may appear in example files, private
-keys never get committed.
+The last two are the deliberate exception to "secrets go in `secrets.yaml`":
+they are machine state, not human choices. Losing them is recoverable — the
+roles regenerate them against an empty cluster — so round-tripping them through
+an encrypted file would add risk without adding control.
+
+`ansible/inventory/` is a **directory** inventory: every file in it is merged.
+That is what lets each Terraform project generate its own fragment without
+clobbering another project's hosts, while `inventory/group_vars/` stays
+hand-authored and tracked. Terraform never writes `group_vars/`.
 
 ## Conventions
 

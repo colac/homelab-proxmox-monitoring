@@ -1,0 +1,10 @@
+---
+# Generates the internal CA and node certificate, then distributes the CA to
+# every host. Runs against all hosts, not just the stack host: every Elastic
+# Agent needs the CA to validate Fleet Server's certificate at enrollment.
+- name: Generate and distribute Elastic TLS certificates
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - es_certs

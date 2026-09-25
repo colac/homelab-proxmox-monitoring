@@ -1,0 +1,74 @@
+---
+# tasks file for es_security_bootstrap
+#
+# Runs once, right after Elasticsearch comes up with security enabled. Sets
+# the built-in kibana_system user's password — Kibana never authenticates as
+# the elastic superuser — and applies the single-node replica override.
+
+- name: Wait for secured cluster health
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ es_http_port }}/_cluster/health"
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    ca_path: "{{ elastic_base_dir }}/elasticsearch/certs/ca.crt"
+    return_content: true
+  register: _es_security_bootstrap_health
+  # yellow is accepted, not tolerated as a near-miss: a single node has
+  # nowhere to place a replica shard, so any index created before the
+  # component-template override below sits at yellow permanently and will
+  # never reach green no matter how long this waits.
+  until: >-
+    _es_security_bootstrap_health.status == 200 and
+    _es_security_bootstrap_health.json.status in ['green', 'yellow'] and
+    _es_security_bootstrap_health.json.number_of_nodes == (groups['elasticsearch'] | length)
+  retries: 30
+  delay: 10
+
+- name: Set kibana_system password
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ es_http_port }}/_security/user/kibana_system/_password"
+    method: POST
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    ca_path: "{{ elastic_base_dir }}/elasticsearch/certs/ca.crt"
+    body_format: json
+    body:
+      password: "{{ kibana_system_password }}"
+    status_code: 200
+  no_log: true
+
+# Fleet's own index templates for the logs-*/metrics-* data streams already
+# reference the logs@custom and metrics@custom component templates, which
+# exist precisely so deployments can override settings without editing
+# Elastic-managed templates (and having the override wiped on the next stack
+# upgrade). Setting replicas to 0 there is the supported way to make a
+# single-node cluster reach green.
+#
+# This only affects data streams created after it is applied. Anything created
+# during a first run before this task lands stays yellow until rolled over —
+# which is why this runs immediately after the cluster is reachable, before
+# Kibana and Fleet have had a chance to create theirs.
+- name: Apply the single-node zero-replica override to Fleet's data streams
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ es_http_port }}/_component_template/{{ item }}@custom"
+    method: PUT
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    ca_path: "{{ elastic_base_dir }}/elasticsearch/certs/ca.crt"
+    body_format: json
+    body:
+      template:
+        settings:
+          index:
+            number_of_replicas: 0
+    status_code: 200
+  loop:
+    - logs
+    - metrics
+    - synthetics
+    - traces
+  when: es_single_node_zero_replicas | default(true) | bool
+  no_log: true

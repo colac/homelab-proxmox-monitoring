@@ -1,0 +1,150 @@
+---
+# ===========================================================================
+# The monitoring VM — single-node Elasticsearch, Kibana, Fleet Server and the
+# Prometheus exporters, all on one machine.
+#
+# This replaces the six-VM cluster in homelab-proxmox-elastic, which was more
+# than the 32 GB mini-PC could spare alongside Nextcloud. The stack is the
+# same; the topology is not. If a change here needs a second VM, it belongs in
+# that repo instead.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Elasticsearch
+# ---------------------------------------------------------------------------
+# Heap must stay at or below half the VM's RAM (8192 MB in the Terraform
+# project) and well under ~31 GB. Off-heap use — direct byte buffers, which
+# default to another heap-sized allowance, plus metaspace and thread stacks —
+# means real resident usage runs well above this number, which is why half is
+# a ceiling rather than a target. Raise memory_mb in Terraform first if this
+# ever needs to grow.
+es_heap_size: "2g"
+
+# Locks the JVM heap into RAM so it can never be swapped out — a swapped heap
+# turns garbage collection into disk I/O and stalls the node. Depends on the
+# unlimited memlock ceiling the Packer template sets in
+# /etc/security/limits.d/99-elasticsearch.conf.
+es_bootstrap_memory_lock: true
+
+# Node name. Lives here rather than in the role's defaults because the
+# elasticsearch env template reads it back out of hostvars to build
+# cluster.initial_master_nodes, and group_vars are reliably visible there in a
+# way role defaults are not.
+es_node_name: "{{ inventory_hostname }}"
+
+# First formation only. Once the cluster has been up once, set this to false
+# and re-run: cluster.initial_master_nodes is a bootstrap-only setting and
+# leaving it set is how a node can silently form a second, separate cluster
+# after a rebuild.
+es_bootstrap_cluster: true
+
+# A single node cannot place replica shards anywhere, so every index that asks
+# for one sits at yellow forever and cluster health never reaches green. The
+# es_security_bootstrap role sets number_of_replicas to 0 on the logs@custom
+# and metrics@custom component templates, which is the supported override
+# point Fleet's own index templates already reference.
+es_single_node_zero_replicas: true
+
+# ---------------------------------------------------------------------------
+# Kibana
+# ---------------------------------------------------------------------------
+kibana_tls_enabled: true
+
+# Serve Kibana with a real Let's Encrypt certificate for kibana_fqdn, obtained
+# by the kibana_tls role (certbot + Cloudflare DNS-01, renewed by certbot's own
+# systemd timer). Ported from the six-VM repo, where it ran live for the same
+# name. DNS-01 is the only option: nothing here is exposed on a public port 80
+# for HTTP-01, and the TXT record lands in Cloudflare regardless of where the
+# A record is served from.
+#
+# Set false to fall back to the internal CA's node certificate — the same pair
+# Elasticsearch and Fleet Server present — which browsers warn about until
+# ansible/.certs/ca.crt is trusted.
+kibana_tls_letsencrypt: true
+
+# kibana.<the zone nextcloud_domain lives in>. Derived rather than written
+# out so the real domain stays out of the tracked repo, where it has never
+# appeared — it arrives from secrets.yaml like every other private value. The
+# A record is NOT managed here: PiHole must resolve this name to the VM's IP.
+kibana_fqdn: "kibana.{{ nextcloud_domain | regex_replace('^[^.]+\\.', '') }}"
+
+# Host-published port. 443 with a real certificate, so the URL needs no port
+# suffix; 5601 (Kibana's own) otherwise. Every Ansible call to Kibana goes to
+# 127.0.0.1 on this port with validate_certs: false, so they follow it
+# unchanged whichever certificate is served.
+kibana_port: "{{ 443 if (kibana_tls_letsencrypt | bool) else 5601 }}"
+kibana_publicbaseurl: >-
+  {{ 'https://' ~ kibana_fqdn if (kibana_tls_letsencrypt | bool)
+     else 'https://' ~ ansible_host ~ ':' ~ kibana_port }}
+
+# ---------------------------------------------------------------------------
+# Fleet
+# ---------------------------------------------------------------------------
+fleet_server_enabled: true
+fleet_server_policy_id: fleet-server-policy
+fleet_server_host_id: fleet-server-default
+
+# ---------------------------------------------------------------------------
+# Exporters
+#
+# These are Prometheus exporters, kept from the Prometheus-based design that
+# preceded this one, because Elastic ships no integration for either TrueNAS
+# or Nextcloud and these already solve that. The Elastic Agent's Prometheus
+# integration scrapes them in collector mode; nothing else about them changed.
+#
+# Their metrics ports bind to 127.0.0.1 only — the agent scrapes from the same
+# host, so nothing on the LAN needs to reach them.
+# ---------------------------------------------------------------------------
+exporters_dir: /opt/exporters
+
+exporters_graphite_image: "prom/graphite-exporter:v0.17.0"
+exporters_nextcloud_image: "xperimental/nextcloud-exporter:0.9.1"
+exporters_pve_image: "prompve/prometheus-pve-exporter:3.10.0"
+
+# How often the agent scrapes them. Slower than Prometheus' usual 15s because
+# Elasticsearch stores one document per scrape, and these are slow-moving
+# infrastructure metrics.
+exporters_scrape_period: "60s"
+
+# TrueNAS. Metrics arrive by push: TrueNAS's own Reporting -> Exporters
+# feature speaks the Graphite line protocol at the ingest port below, and
+# graphite_exporter translates it to Prometheus for the agent to scrape.
+# TrueNAS is not Ansible-managed, so configuring its side is a documented
+# manual step — see MONITORING.md.
+exporters_truenas_enabled: true
+exporters_truenas_host: "192.168.1.214"
+# Must match the "Hostname" field in the TrueNAS exporter config — the mapping
+# file turns it into the instance label.
+exporters_truenas_instance: "truenas"
+exporters_graphite_metrics_port: 9108
+exporters_graphite_ingest_port: 9109
+
+# Nextcloud application metrics (users, shares, apps, free space) via the
+# serverinfo API. Distinct from the Nextcloud VM's OS and container metrics,
+# which come from its own Elastic Agent like every other host.
+exporters_nextcloud_enabled: true
+# Reached through Caddy over the public hostname, so the scrape exercises the
+# same TLS path a real client does. nextcloud_domain is defined in
+# group_vars/all.yml, from the environment.
+exporters_nextcloud_server: "https://{{ nextcloud_domain }}"
+exporters_nextcloud_port: 9205
+# Serverinfo API token, from secrets.yaml via ansible/.envrc. A dedicated
+# token rather than an admin account, so this VM holds no credential that can
+# log in to Nextcloud.
+nextcloud_serverinfo_token: "{{ lookup('env', 'NEXTCLOUD_SERVERINFO_TOKEN') }}"
+
+# ---------------------------------------------------------------------------
+# Proxmox host metrics — the next step, scaffolded but OFF.
+#
+# Needs a read-only PVEAuditor token minted on the hypervisor first; the pveum
+# commands are in MONITORING.md's "Proxmox host" section.
+# ---------------------------------------------------------------------------
+exporters_pve_enabled: false
+# Left empty on purpose so enabling the exporter without setting it fails the
+# role's assert rather than silently scraping nothing.
+exporters_pve_target: ""
+exporters_pve_verify_ssl: false
+exporters_pve_port: 9221
+# Read-only PVEAuditor token, from secrets.yaml via ansible/.envrc.
+pve_exporter_token_id: "{{ lookup('env', 'PVE_EXPORTER_TOKEN_ID') }}"
+pve_exporter_token_secret: "{{ lookup('env', 'PVE_EXPORTER_TOKEN_SECRET') }}"

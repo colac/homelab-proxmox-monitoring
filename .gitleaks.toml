@@ -1,0 +1,6 @@
+[allowlist]
+description = "SOPS-encrypted files are ciphertext at rest and meant to be committed"
+paths = [
+  '''secrets\.ya?ml$''',
+  '''.*\.sops\.ya?ml$''',
+]

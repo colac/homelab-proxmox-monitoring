@@ -1,0 +1,144 @@
+---
+# tasks file for exporters
+#
+# Prometheus exporters for the two things Elastic ships no integration for.
+# The Elastic Agent's Prometheus integration scrapes them in collector mode —
+# see the fleet_bootstrap role, which attaches that integration to the
+# monitoring host's own agent policy.
+#
+# Their metrics ports bind to 127.0.0.1 only. The agent runs on the host as a
+# deb package, not in a container, so it reaches them over loopback and nothing
+# on the LAN can query them. The one exception is the Graphite ingest port,
+# which TrueNAS has to reach from off-box.
+
+- name: Fail early if the Nextcloud exporter has no server or token
+  ansible.builtin.assert:
+    that:
+      - nextcloud_domain is defined
+      - nextcloud_domain | length > 0
+      - exporters_nextcloud_token | length > 0
+    fail_msg: >-
+      exporters_nextcloud_enabled is true but nextcloud_domain and/or
+      nextcloud_serverinfo_token are missing from secrets.yaml. Generate it
+      on the Nextcloud VM with:
+      docker exec -u www-data nextcloud-aio-nextcloud php occ config:app:set
+      serverinfo token --value "$(openssl rand -hex 32)"
+    quiet: true
+  when: exporters_nextcloud_enabled
+
+- name: Fail early if the Proxmox exporter has no target or credentials
+  ansible.builtin.assert:
+    that:
+      - exporters_pve_target | length > 0
+      - exporters_pve_token_id | length > 0
+      - exporters_pve_token_secret | length > 0
+      # The exporter needs user and token name separately, so the env template
+      # splits on "!". Without this check a malformed id fails later as an
+      # opaque Jinja index error.
+      - "'!' in exporters_pve_token_id"
+    fail_msg: >-
+      exporters_pve_enabled is true but exporters_pve_target,
+      pve_exporter_token_id or pve_exporter_token_secret is unset or malformed.
+      The token id must be user@realm!tokenname, e.g.
+      pve-exporter@pve!monitoring. See MONITORING.md's "Proxmox host" section.
+    quiet: true
+  when: exporters_pve_enabled
+
+- name: Ensure Docker is running and enabled
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Ensure the exporters project directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ exporters_dir }}"
+    - "{{ exporters_dir }}/graphite"
+
+- name: Install the TrueNAS Graphite-to-Prometheus mapping
+  ansible.builtin.copy:
+    src: graphite_mapping.conf
+    dest: "{{ exporters_dir }}/graphite/graphite_mapping.conf"
+    owner: root
+    group: root
+    mode: "0640"
+  when: exporters_truenas_enabled
+  notify: Restart exporters
+
+# One env file per service rather than a shared .env, so the Nextcloud token
+# does not end up in the Proxmox exporter's environment and vice versa.
+- name: Write the per-service environment files
+  ansible.builtin.template:
+    src: "env-{{ item.name }}.j2"
+    dest: "{{ exporters_dir }}/env-{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: item.enabled
+  loop:
+    - { name: nextcloud, enabled: "{{ exporters_nextcloud_enabled }}" }
+    - { name: pve, enabled: "{{ exporters_pve_enabled }}" }
+  loop_control:
+    label: "env-{{ item.name }}"
+  notify: Restart exporters
+
+# compose.yaml references these with env_file:, and Compose fails outright on a
+# missing one. A disabled service is templated out of compose.yaml entirely, so
+# its leftover env file is dead weight carrying a stale secret.
+- name: Remove env files for exporters that are switched off
+  ansible.builtin.file:
+    path: "{{ exporters_dir }}/env-{{ item.name }}"
+    state: absent
+  when: not item.enabled
+  loop:
+    - { name: nextcloud, enabled: "{{ exporters_nextcloud_enabled }}" }
+    - { name: pve, enabled: "{{ exporters_pve_enabled }}" }
+  loop_control:
+    label: "env-{{ item.name }}"
+
+- name: Render the exporters compose file
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ exporters_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart exporters
+
+- name: Deploy the exporters
+  community.docker.docker_compose_v2:
+    project_src: "{{ exporters_dir }}"
+    state: present
+    pull: missing
+    remove_orphans: true
+
+- name: Wait for each enabled exporter to answer on loopback
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ item.port }}/metrics"
+    status_code: 200
+  register: _exporters_ready
+  retries: 20
+  delay: 3
+  until: _exporters_ready is succeeded
+  when: item.enabled
+  loop:
+    - { name: graphite, port: "{{ exporters_graphite_metrics_port }}", enabled: "{{ exporters_truenas_enabled }}" }
+    - { name: nextcloud, port: "{{ exporters_nextcloud_port }}", enabled: "{{ exporters_nextcloud_enabled }}" }
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Remind about the manual TrueNAS step
+  ansible.builtin.debug:
+    msg:
+      - "graphite_exporter is listening, but TrueNAS will not send anything until"
+      - "its Reporting -> Exporters entry points at {{ ansible_host }}:{{ exporters_graphite_ingest_port }}"
+      - "with prefix 'truenas' and hostname '{{ exporters_truenas_instance }}'."
+      - "See MONITORING.md — TrueNAS is not Ansible-managed."
+  when: exporters_truenas_enabled

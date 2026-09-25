@@ -1,0 +1,24 @@
+---
+# defaults file for exporters
+#
+# The tuning a human actually changes — which exporters are on, image pins,
+# scrape period — lives in inventory/group_vars/monitoring.yml, which
+# overrides everything here. fleet_bootstrap also reads several of these
+# values to build its Prometheus scrape target list, which is why they are
+# group_vars rather than role defaults in practice.
+
+exporters_dir: /opt/exporters
+
+# Off by default; group_vars turns on what this homelab actually runs.
+exporters_truenas_enabled: false
+exporters_nextcloud_enabled: false
+exporters_pve_enabled: false
+
+exporters_scrape_period: "60s"
+
+# Secrets, sourced from secrets.yaml via the environment. Empty here so the
+# role's asserts produce a useful message instead of an undefined-variable
+# traceback.
+exporters_nextcloud_token: "{{ nextcloud_serverinfo_token | default('') }}"
+exporters_pve_token_id: "{{ pve_exporter_token_id | default('') }}"
+exporters_pve_token_secret: "{{ pve_exporter_token_secret | default('') }}"

@@ -1,0 +1,5 @@
+# Managed by Ansible (role: kibana_tls) — do not edit by hand.
+# certbot-dns-cloudflare credentials — an API token with Zone:DNS:Edit on the
+# zone kibana_fqdn lives in, used only to write and delete the
+# _acme-challenge TXT record. The same token Caddy uses on the Nextcloud VM.
+dns_cloudflare_api_token = {{ cloudflare_dns_api_token }}

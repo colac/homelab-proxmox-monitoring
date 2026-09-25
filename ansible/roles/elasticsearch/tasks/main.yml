@@ -1,0 +1,65 @@
+---
+# tasks file for elasticsearch — render compose + per-node .env, bring up the node
+
+- name: Create node project directory
+  ansible.builtin.file:
+    path: "{{ elastic_base_dir }}/elasticsearch"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  become: true
+
+- name: Render docker-compose.yml (identical across nodes)
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ elastic_base_dir }}/elasticsearch/docker-compose.yml"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0644"
+  become: true
+  notify: Restart elasticsearch
+
+- name: Render per-node .env
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ elastic_base_dir }}/elasticsearch/.env"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0640"
+  become: true
+  notify: Restart elasticsearch
+
+- name: Create secrets directory
+  ansible.builtin.file:
+    path: "{{ elastic_base_dir }}/elasticsearch/secrets"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0700"
+  become: true
+  when: es_security_enabled | bool
+
+- name: Render elastic_password file (consumed via ELASTIC_PASSWORD_FILE)
+  ansible.builtin.copy:
+    content: "{{ es_elastic_password }}"
+    dest: "{{ elastic_base_dir }}/elasticsearch/secrets/elastic_password"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    # The ES docker-entrypoint validates ELASTIC_PASSWORD_FILE's mode and
+    # refuses to start if it's looser than 640 — confirmed the hard way,
+    # crash-looped with 0644 ("must have file permissions 400, 440, 600 or
+    # 640, but actually has: 644"). The container's default elasticsearch
+    # user and the host's ansible_user land on the same numeric uid/gid
+    # (both 1000 on this Ubuntu image), so group-read at 0640 is enough.
+    mode: "0640"
+  become: true
+  no_log: true
+  when: es_security_enabled | bool
+  notify: Restart elasticsearch
+
+- name: Bring up Elasticsearch node
+  community.docker.docker_compose_v2:
+    project_src: "{{ elastic_base_dir }}/elasticsearch"
+    state: present
+  become: true
