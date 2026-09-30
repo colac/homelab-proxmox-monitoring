@@ -185,7 +185,10 @@ ansible-playbook playbooks/20-elastic-certs.yml \
 
 The bootstrap dry run stops at the data disk on a fresh VM — `--check` cannot
 simulate volume-group creation, and it says so. After the real run,
-`findmnt /var/lib/docker` on the VM should show `docker--vg-docker--lv`.
+`findmnt /var/lib/docker` on the VM should show `docker--vg-docker--lv`, and
+`findmnt /var/lib/containerd` the same volume with `[/containerd-root]`. If the
+second is missing, pulled images fill the 12G root: see
+[Root filesystem full](#root-filesystem-full-apt-fails-with-no-space-left-on-device).
 
 Kibana is then at `https://kibana.<your zone>` (the `kibana_fqdn` in
 `group_vars/monitoring.yml`), user `elastic`.
@@ -197,7 +200,8 @@ Encrypt certificate for `kibana_fqdn` over Cloudflare DNS-01, with the same
 `cloudflare_dns_api_token` Caddy uses for Nextcloud, and Kibana serves it on
 443. certbot's own systemd timer renews it, and the deploy-hook it registered
 copies the new pair in and restarts the container — no cron entry, nothing to
-re-run.
+re-run. If renewal fails because the Cloudflare token changed or expired,
+see [Rotating the Cloudflare API token](NEXTCLOUD.md#rotating-the-cloudflare-api-token-or-a-cert-failed-to-renew).
 
 **The A record is yours to set, once, in PiHole** (Local DNS → DNS Records):
 `kibana_fqdn` → the monitoring VM's IP (`terraform output vm_ip`). Issuance
@@ -401,4 +405,61 @@ overwritten on the next run. Edit the role templates instead.
 
 Disk is what runs out first. There is no retention policy configured yet: the
 Fleet integrations ship with ILM policies that roll over but never delete.
-Watch `/` on the VM and set an ILM delete phase before the 100 GB disk fills.
+Watch `/var/lib/docker` on the VM and set an ILM delete phase before the
+100 GB data disk fills.
+
+### Upgrading the stack
+
+`stack_version` in `ansible/inventory/group_vars/all.yml` is the single pin for
+Elasticsearch, Kibana, Fleet Server and the Elastic Agent. Check a version is
+actually published before using it
+([release notes](https://www.elastic.co/docs/release-notes)). Elastic's version
+index lists builds days before their images reach `docker.elastic.co`. Also
+bump `elastic_agent_version` in both `packer/*/variables.pkr.hcl` (and the
+fallback in `scripts/30-install-elastic-agent.sh`) so new templates match.
+
+Roll it out in Elastic's required order: Elasticsearch, then Kibana, then Fleet
+Server, then the agents. Kibana refuses to start against an older
+Elasticsearch, and agents must not be newer than Fleet Server:
+
+```bash
+ansible-playbook playbooks/25-elasticsearch.yml
+ansible-playbook playbooks/35-kibana.yml
+ansible-playbook playbooks/40-fleet-server.yml
+ansible-playbook playbooks/50-elastic-agent.yml      # every host, Nextcloud's too
+ansible-playbook playbooks/99-healthcheck.yml
+```
+
+Each playbook re-renders the compose `.env`, and Compose pulls and recreates
+only the container whose image changed. **Elasticsearch cannot be downgraded.**
+Once it has started on the new version, its data is upgraded in place, so a
+bad release is fixed by moving forward, not by reverting the pin. Afterwards,
+`sudo docker image prune -a -f` on the VM removes the old images.
+
+### Root filesystem full (apt fails with "No space left on device")
+
+The usual cause is images on the OS disk: Docker's containerd image store
+keeps them in `/var/lib/containerd`, and a VM bootstrapped before
+`docker_data` handled that has it on the 12G root. Confirm on the VM:
+
+```bash
+df -h /                                   # 100%
+sudo du -xsh /var/lib/containerd          # several GB
+findmnt /var/lib/containerd               # nothing: not on the data disk
+```
+
+Re-run the bootstrap for that host only. It stops Docker (so Elasticsearch,
+Kibana and Fleet Server go down for the copy, a minute or two), moves
+containerd's root onto the data disk, deletes the OS-disk copy, and starts
+everything again:
+
+```bash
+ansible-playbook playbooks/00-bootstrap.yml --limit monitoring-vm --check --diff
+ansible-playbook playbooks/00-bootstrap.yml --limit monitoring-vm
+```
+
+Then `df -h /` should be down to about 60%, and `docker ps` should show
+every container up. If `/` is still full, the next largest is usually
+`/var/lib/elastic-agent` (about 1G, normal) — grow root from the free
+extents in `ubuntu-vg` rather than deleting from it
+(see [packer/README.md](packer/README.md)).

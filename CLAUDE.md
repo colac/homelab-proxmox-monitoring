@@ -107,6 +107,15 @@ Makefile                    Installs pinned tools; `make help` lists targets
   `/var/lib/docker/volumes`. `elastic_base_dir` holds only compose files, certs
   and secrets. So `data_disk_size`, not `disk0_size`, is the ILM retention
   ceiling — that is why monitoring's 100G moved from disk0 to the data disk.
+- **Images live on the data disk too, via a bind mount of `/var/lib/containerd`.**
+  Docker's containerd image store keeps images and layers in containerd's
+  root, which a mount at `/var/lib/docker` does not cover — that filled the
+  monitoring VM's 12G root. `docker_data` bind-mounts
+  `/var/lib/docker/containerd-root` over `/var/lib/containerd`. Do not swap it
+  for `root =` in `/etc/containerd/config.toml` (a package conffile) or for
+  disabling the image store in `daemon.json` (it is Docker's default). Systemd
+  drop-ins make containerd and Docker *require* both mounts, so a host missing
+  its data disk boots with Docker down instead of running it empty on the OS root.
 - **No logical volume is sized `-1`.** The leftover extents in `ubuntu-vg` are
   deliberate headroom: `lvextend` + `resize2fs` grows whatever fills first
   without repartitioning. Filling the group would take that away.
@@ -143,6 +152,13 @@ Makefile                    Installs pinned tools; `make help` lists targets
   browsers: agents talk to Fleet Server and Elasticsearch, which keep the
   internal CA. `acme_email` and `cloudflare_dns_api_token` live in
   `group_vars/all.yml` because Caddy on the Nextcloud VM uses them too.
+- **One Cloudflare token serves both certs (Caddy and Kibana's certbot).**
+  Rotating it or fixing a failed renewal: `sops secrets.yaml`, `direnv reload`,
+  then re-run `10-nextcloud.yml --limit nextcloud-vm` and
+  `35-kibana.yml --limit monitoring-vm`. Full steps and verification are in
+  [NEXTCLOUD.md](NEXTCLOUD.md#rotating-the-cloudflare-api-token-or-a-cert-failed-to-renew).
+  Never paste the token into a role default, `.ini` or `.env` by hand — those
+  files are rendered from it.
 
 ## Toolchain & how to run things
 
