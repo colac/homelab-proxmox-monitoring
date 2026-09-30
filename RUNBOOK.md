@@ -185,7 +185,10 @@ ansible-playbook playbooks/20-elastic-certs.yml \
 
 The bootstrap dry run stops at the data disk on a fresh VM — `--check` cannot
 simulate volume-group creation, and it says so. After the real run,
-`findmnt /var/lib/docker` on the VM should show `docker--vg-docker--lv`.
+`findmnt /var/lib/docker` on the VM should show `docker--vg-docker--lv`, and
+`findmnt /var/lib/containerd` the same volume with `[/containerd-root]`. If the
+second is missing, pulled images fill the 12G root: see
+[Root filesystem full](#root-filesystem-full-apt-fails-with-no-space-left-on-device).
 
 Kibana is then at `https://kibana.<your zone>` (the `kibana_fqdn` in
 `group_vars/monitoring.yml`), user `elastic`.
@@ -402,4 +405,33 @@ overwritten on the next run. Edit the role templates instead.
 
 Disk is what runs out first. There is no retention policy configured yet: the
 Fleet integrations ship with ILM policies that roll over but never delete.
-Watch `/` on the VM and set an ILM delete phase before the 100 GB disk fills.
+Watch `/var/lib/docker` on the VM and set an ILM delete phase before the
+100 GB data disk fills.
+
+### Root filesystem full (apt fails with "No space left on device")
+
+The usual cause is images on the OS disk: Docker's containerd image store
+keeps them in `/var/lib/containerd`, and a VM bootstrapped before
+`docker_data` handled that has it on the 12G root. Confirm on the VM:
+
+```bash
+df -h /                                   # 100%
+sudo du -xsh /var/lib/containerd          # several GB
+findmnt /var/lib/containerd               # nothing: not on the data disk
+```
+
+Re-run the bootstrap for that host only. It stops Docker (so Elasticsearch,
+Kibana and Fleet Server go down for the copy, a minute or two), moves
+containerd's root onto the data disk, deletes the OS-disk copy, and starts
+everything again:
+
+```bash
+ansible-playbook playbooks/00-bootstrap.yml --limit monitoring-vm --check --diff
+ansible-playbook playbooks/00-bootstrap.yml --limit monitoring-vm
+```
+
+Then `df -h /` should be down to about 60%, and `docker ps` should show
+every container up. If `/` is still full, the next largest is usually
+`/var/lib/elastic-agent` (about 1G, normal) — grow root from the free
+extents in `ubuntu-vg` rather than deleting from it
+(see [packer/README.md](packer/README.md)).

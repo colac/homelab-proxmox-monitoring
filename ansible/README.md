@@ -245,6 +245,13 @@ anywhere once you're on the tailnet.
   live under `/var/lib/docker/volumes`. The data disk's size, not
   `disk0_size`, is what caps retention.
 
+  Images go there too. Docker's containerd image store keeps them in
+  `/var/lib/containerd`, outside `/var/lib/docker`, so the role bind-mounts
+  `/var/lib/docker/containerd-root` over it, moving any existing content across
+  first and deleting the OS-disk copy. Systemd drop-ins make `containerd` and
+  `docker` require both mounts: without the data disk the VM boots with
+  Docker stopped rather than running it empty on the OS root.
+
   It distinguishes three states before writing anything:
 
   | Device state | What it does |
