@@ -18,7 +18,7 @@
 # Elastic's .deb, so a stack bump does not strictly require a template
 # rebuild — it just means every host re-downloads the package once.
 # ---------------------------------------------------------------------------
-stack_version: "9.4.2"
+stack_version: "9.5.4"
 
 es_image: "docker.elastic.co/elasticsearch/elasticsearch:{{ stack_version }}"
 kibana_image: "docker.elastic.co/kibana/kibana:{{ stack_version }}"

@@ -408,6 +408,34 @@ Fleet integrations ship with ILM policies that roll over but never delete.
 Watch `/var/lib/docker` on the VM and set an ILM delete phase before the
 100 GB data disk fills.
 
+### Upgrading the stack
+
+`stack_version` in `ansible/inventory/group_vars/all.yml` is the single pin for
+Elasticsearch, Kibana, Fleet Server and the Elastic Agent. Check a version is
+actually published before using it
+([release notes](https://www.elastic.co/docs/release-notes)). Elastic's version
+index lists builds days before their images reach `docker.elastic.co`. Also
+bump `elastic_agent_version` in both `packer/*/variables.pkr.hcl` (and the
+fallback in `scripts/30-install-elastic-agent.sh`) so new templates match.
+
+Roll it out in Elastic's required order: Elasticsearch, then Kibana, then Fleet
+Server, then the agents. Kibana refuses to start against an older
+Elasticsearch, and agents must not be newer than Fleet Server:
+
+```bash
+ansible-playbook playbooks/25-elasticsearch.yml
+ansible-playbook playbooks/35-kibana.yml
+ansible-playbook playbooks/40-fleet-server.yml
+ansible-playbook playbooks/50-elastic-agent.yml      # every host, Nextcloud's too
+ansible-playbook playbooks/99-healthcheck.yml
+```
+
+Each playbook re-renders the compose `.env`, and Compose pulls and recreates
+only the container whose image changed. **Elasticsearch cannot be downgraded.**
+Once it has started on the new version, its data is upgraded in place, so a
+bad release is fixed by moving forward, not by reverting the pin. Afterwards,
+`sudo docker image prune -a -f` on the VM removes the old images.
+
 ### Root filesystem full (apt fails with "No space left on device")
 
 The usual cause is images on the OS disk: Docker's containerd image store
