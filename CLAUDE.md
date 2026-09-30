@@ -143,6 +143,13 @@ Makefile                    Installs pinned tools; `make help` lists targets
   browsers: agents talk to Fleet Server and Elasticsearch, which keep the
   internal CA. `acme_email` and `cloudflare_dns_api_token` live in
   `group_vars/all.yml` because Caddy on the Nextcloud VM uses them too.
+- **One Cloudflare token serves both certs (Caddy and Kibana's certbot).**
+  Rotating it or fixing a failed renewal: `sops secrets.yaml`, `direnv reload`,
+  then re-run `10-nextcloud.yml --limit nextcloud-vm` and
+  `35-kibana.yml --limit monitoring-vm`. Full steps and verification are in
+  [NEXTCLOUD.md](NEXTCLOUD.md#rotating-the-cloudflare-api-token-or-a-cert-failed-to-renew).
+  Never paste the token into a role default, `.ini` or `.env` by hand — those
+  files are rendered from it.
 
 ## Toolchain & how to run things
 

@@ -197,7 +197,8 @@ Encrypt certificate for `kibana_fqdn` over Cloudflare DNS-01, with the same
 `cloudflare_dns_api_token` Caddy uses for Nextcloud, and Kibana serves it on
 443. certbot's own systemd timer renews it, and the deploy-hook it registered
 copies the new pair in and restarts the container — no cron entry, nothing to
-re-run.
+re-run. If renewal fails because the Cloudflare token changed or expired,
+see [Rotating the Cloudflare API token](NEXTCLOUD.md#rotating-the-cloudflare-api-token-or-a-cert-failed-to-renew).
 
 **The A record is yours to set, once, in PiHole** (Local DNS → DNS Records):
 `kibana_fqdn` → the monitoring VM's IP (`terraform output vm_ip`). Issuance
