@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/colac/homelab-proxmox-monitoring/compare/v1.0.0...v1.1.0) (2026-10-06)
+
+
+### Features
+
+* standalone monitoring repo with mise and per-command secrets ([1d8fdf6](https://github.com/colac/homelab-proxmox-monitoring/commit/1d8fdf657d0abbd079aefafd0a5972efaf4a8ee8))
+
 # 1.0.0 (2026-10-06)
 
 
