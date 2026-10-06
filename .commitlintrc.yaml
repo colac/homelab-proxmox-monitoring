@@ -1,0 +1,5 @@
+---
+# Conventional Commits, checked by the commitlint pre-commit hook (commit-msg)
+# and relied on by semantic-release to pick the next version.
+extends:
+  - "@commitlint/config-conventional"

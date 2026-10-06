@@ -151,5 +151,5 @@
           {{ 'TrueNAS metrics are arriving.'
              if ('job="truenas"' in (_hc_graphite.content | default('')))
              else 'graphite_exporter is up but has received nothing from TrueNAS —
-                   check its Reporting -> Exporters entry (see MONITORING.md).' }}
+                   check its Reporting -> Exporters entry (see RUNBOOK.md).' }}
       when: exporters_truenas_enabled

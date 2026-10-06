@@ -1,16 +1,23 @@
 ---
-# Install with: ansible-galaxy collection install -r requirements.yml
+# Installed by `mise run setup` into ./collections (ansible.cfg's
+# collections_path), so this repo's pins never mix with the workloads repo's.
 collections:
+  # Shared host roles (common, docker_data) from the core repo, pinned to a
+  # release tag. Bump deliberately; run 00-bootstrap.yml with --check after.
+  # community.general and ansible.posix arrive as its dependencies too.
+  - name: https://github.com/colac/homelab-proxmox.git#/ansible/
+    type: git
+    version: v2.0.0
   - name: community.docker
     version: ">=3.10.0"
   - name: ansible.posix
     version: ">=1.5.0"
-  # lvg / lvol / filesystem, used by the docker_data role to put
-  # /var/lib/docker on its own LVM volume.
+  # lvg / lvol / filesystem for colac.homelab.docker_data — also declared as
+  # that collection's dependency; repeated here so the upper bound holds.
   #
   # The upper bound is load-bearing: 13.x declares requires_ansible >=2.18 and
-  # ansible-lint warns that it does not support the ansible-core 2.17.14 the
-  # Makefile pins. 12.x is the newest line that still declares >=2.17.0. Raise
-  # both together or not at all.
+  # ansible-lint warns that it does not support the ansible-core 2.17.14
+  # requirements.txt pins. 12.x is the newest line that still declares
+  # >=2.17.0. Raise both together or not at all.
   - name: community.general
     version: ">=10.0.0,<13.0.0"

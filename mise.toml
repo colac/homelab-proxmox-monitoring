@@ -1,0 +1,158 @@
+# mise — pinned tools, environment and tasks for the monitoring layer.
+#
+#   mise trust && mise install      # once per clone (and after editing this file)
+#   mise run setup                  # venv deps, collections, node tools, git hooks
+#   mise tasks                      # everything you can run
+#
+# Secrets are NOT loaded into your shell. Tasks that need credentials run
+# through .mise/sops-exec, which decrypts secrets.yaml for that one command
+# and passes only what the tool needs. Arguments after the task name go
+# straight to the tool, quoting intact:
+#
+#   mise run tf:plan
+#   mise run play playbooks/35-kibana.yml --check --diff
+#
+# Per-machine overrides go in mise.local.toml (git-ignored).
+min_version = "2026.1.0"
+
+[tools]
+# Same pins as the core repo — bump them together.
+terraform = "1.15.7"
+terraform-docs = "0.21.0"
+tflint = "0.63.1"
+trivy = "0.71.2"
+shellcheck = "0.11.0"
+sops = "3.13.3"
+age = "1.3.2"
+# ansible-core 2.17 supports controller Python 3.10–3.12 only.
+python = "3.12"
+node = "26.4.0"
+
+[env]
+_.python.venv = { path = ".venv", create = true }
+_.path = ["{{config_root}}/node_modules/.bin"]
+# So ad-hoc ansible commands work from any directory in the repo.
+ANSIBLE_CONFIG = "{{config_root}}/ansible/ansible.cfg"
+# Not a secret — the hypervisor's address is, and lives in secrets.yaml.
+PROXMOX_TLS_INSECURE = "false"
+# sops opens decrypted files in VS Code, for `mise run secrets:edit` and for
+# bare `sops` in a mise-activated shell. Set here so the repo decides, not
+# whatever EDITOR a given terminal happens to have. --wait is load-bearing:
+# without it `code` returns at once and sops re-encrypts the unedited file.
+SOPS_EDITOR = "code --wait"
+# Where `deps:dev` finds the core repo. Override in mise.local.toml.
+HOMELAB_CORE_DIR = "{{config_root}}/../homelab-proxmox"
+
+# --------------------------------------------------------------------------
+# Setup and checks
+# --------------------------------------------------------------------------
+[tasks.setup]
+description = "Install Python/Node deps, git hooks, tflint plugins, then the pinned Ansible collections"
+run = [
+  "pip install -q --upgrade pip",
+  "pip install -q -r requirements.txt",
+  "npm ci --silent",
+  "pre-commit install --hook-type pre-commit --hook-type commit-msg",
+  "tflint --init",
+  # Last, so everything above is in place even when it fails — it needs the
+  # pinned core tag to exist on GitHub. Until then: `mise run deps:dev`.
+  { task = "deps" },
+]
+
+[tasks.deps]
+description = "Install ansible/requirements.yml — colac.homelab at its pinned core tag, plus Galaxy collections"
+dir = "{{config_root}}/ansible"
+# --force: a git-sourced collection is "already installed" whenever its
+# galaxy.yml version matches, even if the pinned tag moved.
+run = "ansible-galaxy collection install --force -r requirements.yml"
+
+[tasks."deps:dev"]
+description = "Like deps, but colac.homelab from the sibling core checkout instead of the pinned tag"
+dir = "{{config_root}}/ansible"
+run = '''
+echo "Using colac.homelab from $HOMELAB_CORE_DIR/ansible — 'mise run deps' restores the pin."
+dev_req=$(mktemp --suffix=.yml)
+trap 'rm -f "$dev_req"' EXIT
+# requirements.yml minus the git-sourced entry (the tag may not exist yet).
+python -c 'import sys, yaml; r = yaml.safe_load(open("requirements.yml")); r["collections"] = [c for c in r["collections"] if c.get("type") != "git"]; yaml.safe_dump(r, sys.stdout)' >"$dev_req"
+ansible-galaxy collection install -r "$dev_req"
+ansible-galaxy collection install --force "$HOMELAB_CORE_DIR/ansible"
+'''
+
+[tasks.lint]
+description = "Every pre-commit hook on every file, then ansible-lint"
+run = ["pre-commit run --all-files", { task = "lint:ansible" }]
+
+[tasks."lint:ansible"]
+description = "ansible-lint (production profile) + syntax-check of site.yml"
+dir = "{{config_root}}/ansible"
+run = ["ansible-lint", "ansible-playbook playbooks/site.yml --syntax-check"]
+
+[tasks."tf:validate"]
+description = "terraform fmt + validate (no backend, no credentials)"
+dir = "{{config_root}}/terraform"
+run = [
+  "terraform fmt -check -recursive",
+  "terraform init -backend=false -input=false >/dev/null",
+  "terraform validate",
+]
+
+[tasks."release:dry-run"]
+description = "Show the version semantic-release would cut next"
+run = "semantic-release --no-ci --dry-run"
+
+# --------------------------------------------------------------------------
+# Secrets
+# --------------------------------------------------------------------------
+[tasks."secrets:edit"]
+description = "Open secrets.yaml decrypted in VS Code; re-encrypts on save"
+run = "sops secrets.yaml"
+# Hand the terminal straight to sops and its editor (SOPS_EDITOR in [env]).
+# Without it mise sits between them.
+raw = true
+
+[tasks."secrets:check"]
+description = "Verify secrets.yaml has every key Terraform and Ansible need (names only, never values)"
+run = [
+  ".mise/sops-exec --check terraform",
+  ".mise/sops-exec --check ansible",
+]
+
+# --------------------------------------------------------------------------
+# Terraform — the monitoring VM (TFC workspace "Monitoring", Local execution)
+# --------------------------------------------------------------------------
+[tasks.tf]
+description = "Any terraform command with credentials: mise run tf state list"
+dir = "{{config_root}}/terraform"
+run = "{{config_root}}/.mise/sops-exec terraform terraform"
+
+[tasks."tf:plan"]
+description = "terraform init + plan"
+dir = "{{config_root}}/terraform"
+run = [
+  "{{config_root}}/.mise/sops-exec terraform terraform init -input=false",
+  "{{config_root}}/.mise/sops-exec terraform terraform plan",
+]
+
+[tasks."tf:apply"]
+description = "terraform apply (also regenerates ansible/inventory/monitoring.yml)"
+dir = "{{config_root}}/terraform"
+run = "{{config_root}}/.mise/sops-exec terraform terraform apply"
+
+# --------------------------------------------------------------------------
+# Ansible
+# --------------------------------------------------------------------------
+[tasks.inventory]
+description = "Show the merged directory inventory (no credentials needed)"
+dir = "{{config_root}}/ansible"
+run = "ansible-inventory --graph"
+
+[tasks.ping]
+description = "SSH reachability of every host in the inventory"
+dir = "{{config_root}}/ansible"
+run = "ansible all -m ping"
+
+[tasks.play]
+description = "ansible-playbook with credentials: mise run play playbooks/site.yml --check"
+dir = "{{config_root}}/ansible"
+run = "{{config_root}}/.mise/sops-exec ansible ansible-playbook"
