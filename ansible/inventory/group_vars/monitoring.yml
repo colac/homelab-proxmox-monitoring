@@ -110,7 +110,7 @@ exporters_scrape_period: "60s"
 # feature speaks the Graphite line protocol at the ingest port below, and
 # graphite_exporter translates it to Prometheus for the agent to scrape.
 # TrueNAS is not Ansible-managed, so configuring its side is a documented
-# manual step — see MONITORING.md.
+# manual step — see RUNBOOK.md.
 exporters_truenas_enabled: true
 exporters_truenas_host: "192.168.1.214"
 # Must match the "Hostname" field in the TrueNAS exporter config — the mapping
@@ -128,7 +128,7 @@ exporters_nextcloud_enabled: true
 # group_vars/all.yml, from the environment.
 exporters_nextcloud_server: "https://{{ nextcloud_domain }}"
 exporters_nextcloud_port: 9205
-# Serverinfo API token, from secrets.yaml via ansible/.envrc. A dedicated
+# Serverinfo API token, from secrets.yaml via .mise/sops-exec. A dedicated
 # token rather than an admin account, so this VM holds no credential that can
 # log in to Nextcloud.
 nextcloud_serverinfo_token: "{{ lookup('env', 'NEXTCLOUD_SERVERINFO_TOKEN') }}"
@@ -137,7 +137,7 @@ nextcloud_serverinfo_token: "{{ lookup('env', 'NEXTCLOUD_SERVERINFO_TOKEN') }}"
 # Proxmox host metrics — the next step, scaffolded but OFF.
 #
 # Needs a read-only PVEAuditor token minted on the hypervisor first; the pveum
-# commands are in MONITORING.md's "Proxmox host" section.
+# commands are in RUNBOOK.md's "Proxmox host" section.
 # ---------------------------------------------------------------------------
 exporters_pve_enabled: false
 # Left empty on purpose so enabling the exporter without setting it fails the
@@ -145,6 +145,6 @@ exporters_pve_enabled: false
 exporters_pve_target: ""
 exporters_pve_verify_ssl: false
 exporters_pve_port: 9221
-# Read-only PVEAuditor token, from secrets.yaml via ansible/.envrc.
+# Read-only PVEAuditor token, from secrets.yaml via .mise/sops-exec.
 pve_exporter_token_id: "{{ lookup('env', 'PVE_EXPORTER_TOKEN_ID') }}"
 pve_exporter_token_secret: "{{ lookup('env', 'PVE_EXPORTER_TOKEN_SECRET') }}"

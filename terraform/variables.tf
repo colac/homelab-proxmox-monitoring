@@ -17,7 +17,7 @@ variable "pm_api_token_secret" {
 
 variable "pm_tls_insecure" {
   type        = bool
-  description = "Skip TLS verification against the Proxmox API. Set via TF_VAR_pm_tls_insecure from terraform/.envrc (PROXMOX_TLS_INSECURE); true is only needed when the endpoint serves a self-signed certificate."
+  description = "Skip TLS verification against the Proxmox API. Set via TF_VAR_pm_tls_insecure by .mise/sops-exec (PROXMOX_TLS_INSECURE in mise.toml); true is only needed when the endpoint serves a self-signed certificate."
   default     = false
 }
 
@@ -105,7 +105,7 @@ variable "ssh_public_key" {
 variable "ansible_inventory_path" {
   type        = string
   description = "Where to write the generated Ansible inventory fragment. Relative to this project directory."
-  default     = "../../../ansible/inventory/monitoring.yml"
+  default     = "../ansible/inventory/monitoring.yml"
 }
 
 variable "ansible_inventory_hostname" {

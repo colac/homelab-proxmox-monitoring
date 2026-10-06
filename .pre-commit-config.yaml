@@ -44,23 +44,6 @@ repos:
       #     - --args=-c checkov.yaml
       #   files: ^terraform/
 
-  - repo: https://github.com/cisagov/pre-commit-packer
-    rev: v0.3.1
-    hooks:
-      - id: packer_fmt
-        name: Packer fmt
-        entry: bash -c 'packer fmt -recursive .'
-        language: system
-        files: ^packer/\.pkr\.hcl$
-        pass_filenames: false
-
-      - id: packer_validate
-        name: Packer validate
-        entry: bash -c 'for dir in */; do (cd "$dir" && if ls *.pkr.hcl 1> /dev/null 2>&1; then packer validate .; fi); done'
-        language: system
-        files: ^packer/\.pkr\.hcl$
-        pass_filenames: false
-
 #  # Ansible
 #  - repo: https://github.com/ansible/ansible-lint.git
 #    rev: v25.9.2
@@ -85,6 +68,8 @@ repos:
     hooks:
       - id: markdownlint
         args: [--config, .markdownlint.json]
+        # Written by semantic-release, not by hand — never edited, never linted.
+        exclude: ^CHANGELOG\.md$
 
   # Shell script linting
   - repo: https://github.com/shellcheck-py/shellcheck-py

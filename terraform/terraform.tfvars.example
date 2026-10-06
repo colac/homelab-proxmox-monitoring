@@ -5,8 +5,8 @@
 #
 # The Proxmox endpoint and API token are deliberately NOT here. They arrive as
 # TF_VAR_pm_api_url / TF_VAR_pm_api_token_id / TF_VAR_pm_api_token_secret from
-# terraform/.envrc, which direnv fills by decrypting the repo-root secrets.yaml
-# (SOPS + age). That keeps every credential out of the working tree, which is
+# .mise/sops-exec, which decrypts the repo-root secrets.yaml (SOPS + age) for
+# each `mise run tf …` command. That keeps every credential out of the working tree, which is
 # why *.tfvars is git-ignored and this .example carries no secrets.
 # ----------------------------------------------------------------------------
 

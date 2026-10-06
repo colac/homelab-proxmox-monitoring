@@ -1,15 +1,15 @@
 ---
 # Redeploy everything this repo owns, in dependency order.
 #
-# Run from ansible/, after each project's `terraform apply` has generated its
-# inventory fragment. direnv supplies every credential as an environment
-# variable on `cd ansible`, so there is no vault password and no -e flag:
+# Run after `mise run tf:apply` has generated inventory/monitoring.yml.
+# `mise run play` hands ansible-playbook the credentials for that one run, so
+# there is no vault password and no -e flag:
 #
-#   cd ansible
-#   ansible-playbook playbooks/site.yml
+#   mise run play playbooks/site.yml
 #
-# Every play is scoped to a group, so a host that does not exist yet is simply
-# skipped — running this with only the monitoring VM provisioned is fine.
+# Every play is scoped to a group. The certificate and agent plays run on
+# `all`, which includes the agent targets in inventory/hosts.yml — hosts other
+# repos own, which this one only enrolls with Fleet.
 #
 # The order is load-bearing: certificates before Elasticsearch (it will not
 # start without them), Elasticsearch before Kibana, Kibana before Fleet Server
@@ -17,8 +17,6 @@
 # agents (which have nothing to enroll against otherwise).
 - name: Preflight
   import_playbook: 00-bootstrap.yml
-- name: Nextcloud
-  import_playbook: 10-nextcloud.yml
 - name: Elastic TLS certificates
   import_playbook: 20-elastic-certs.yml
 - name: Elasticsearch

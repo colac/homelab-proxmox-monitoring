@@ -1,9 +1,15 @@
 ---
-# Copy to hosts.yml and set ansible_host to the IP that Terraform printed
-# (see: `terraform output ansible_inventory_line`).
+# Agent targets: hosts OTHER repos own that this repo enrolls with Fleet.
+# Copy to hosts.yml (git-ignored) and set each ansible_host to the address the
+# owning repo's Terraform printed (`terraform output ansible_inventory_line`).
+#
+# The monitoring VM itself is not listed here — Terraform generates
+# inventory/monitoring.yml for it. Hosts in `agents` only see the plays that
+# run on `all` (20-elastic-certs: the CA; 50-elastic-agent: enrollment, with
+# the homelab-agents policy). Nothing here prepares their disks or Docker.
 all:
   children:
-    nextcloud:
+    agents:
       hosts:
         nextcloud-vm:
           ansible_host: 192.168.1.50

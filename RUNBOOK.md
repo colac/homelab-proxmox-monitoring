@@ -2,8 +2,9 @@
 
 End-to-end runbook for the observability deployment: single-node
 Elasticsearch, Kibana and Fleet Server, plus a Fleet-managed Elastic Agent on
-every host. Sibling of [NEXTCLOUD.md](NEXTCLOUD.md); the same
-Packer → Terraform → Ansible pipeline produces both.
+every host — including hosts other repos own, such as the Nextcloud VM. The
+template comes from the core repo (`homelab-proxmox`), the VM from this repo's
+Terraform, everything inside it from this repo's Ansible.
 
 ## Why one VM
 
@@ -84,18 +85,17 @@ Three ingestion paths, and the reason for each:
 
 ## Prerequisites
 
-**The Packer template must be rebuilt before this can run.** Elasticsearch
-performs a hard bootstrap check on `vm.max_map_count` and refuses to start
-below 262144; the template did not set it. That setting, the memlock/nofile
-limits and the `/opt/elastic` directory are now baked into
-`packer/ubuntu-24.04`, matching how the six-VM repo does it — the OS arrives
-ready and Ansible has no involvement in host configuration. The same rebuild
-swaps Grafana Alloy out for the Elastic Agent package.
+**The VM must be cloned from a template that carries the Elasticsearch
+prerequisites.** Elasticsearch performs a hard bootstrap check on
+`vm.max_map_count` and refuses to start below 262144. That setting, the
+memlock/nofile limits and the `/opt/elastic` directory are baked into the core
+repo's Packer templates, matching how the six-VM repo does it — the OS arrives
+ready and Ansible only *verifies* it (`elastic_preflight`). If the template
+predates them, rebuild it in the core repo:
 
 ```bash
-cd packer/ubuntu-24.04
-packer validate .
-packer build .
+cd ../homelab-proxmox
+mise run packer:build 26.04       # the template_name terraform/ clones
 ```
 
 The existing Nextcloud VM does **not** need re-cloning. It keeps running on
@@ -107,19 +107,17 @@ Also needed:
 
 - Terraform Cloud workspace **`Monitoring`** in org `colac_homelab`,
   Execution Mode **Local**.
-- The Elastic entries filled in in the repo-root `secrets.yaml`
-  (`sops secrets.yaml`) — see `secrets.yaml.example` and the "Secrets" section
-  below.
-- `direnv` active in your shell, so those values reach Terraform and Ansible as
-  environment variables. `make direnv-allow` if it reports a blocked `.envrc`.
+- This repo's `secrets.yaml` filled in (`mise run secrets:edit`) — see
+  `secrets.yaml.example` and the "Secrets" section below.
+  `mise run secrets:check` confirms every key is there without printing any.
+- `mise install && mise run setup` done once, which also installs the pinned
+  `colac.homelab` collection from the core repo.
 
 ## 1. Provision the VM
 
 ```bash
-cd terraform/projects/monitoring   # direnv exports TF_VAR_pm_api_* on the way in
-terraform init
-terraform plan
-terraform apply
+mise run tf:plan       # init + plan, with the Proxmox token for this command only
+mise run tf:apply
 ```
 
 This writes `ansible/inventory/monitoring.yml`, putting the single host into
@@ -133,10 +131,12 @@ agent had not answered yet — wait for the VM to boot and re-run.
 ## 2. Fill in the secrets
 
 ```bash
-sops secrets.yaml        # from the repo root; re-encrypts on save
+mise run secrets:edit    # decrypts into VS Code, re-encrypts on save
+mise run secrets:check   # names anything missing; never prints a value
 ```
 
-Four values (see `secrets.yaml.example` for the full comments):
+The Elastic values (see `secrets.yaml.example` for the full comments, and
+for the Cloudflare/ACME keys Kibana's certificate needs):
 
 ```bash
 openssl rand -hex 32     # kibana_encryption_key
@@ -158,29 +158,28 @@ sudo docker exec -u www-data nextcloud-aio-nextcloud \
 
 ## 3. Deploy
 
+Agent targets other repos own go in `ansible/inventory/hosts.yml` (copy
+`hosts.yml.example`) — today the Nextcloud VM. Then:
+
 ```bash
-cd ansible               # direnv exports the credentials and puts .venv/bin on PATH
-ansible-playbook playbooks/site.yml
+mise run inventory       # monitoring-vm in monitoring/elasticsearch/kibana; agents listed
+mise run play playbooks/site.yml
 ```
 
-That runs the whole homelab, Nextcloud included. The order is load-bearing:
+That deploys the stack and enrolls every agent target. It never prepares
+another repo's host: `00-bootstrap.yml` targets `monitoring` only, and the
+agent targets see just the CA distribution and the enrollment. The order is
+load-bearing:
 certificates before Elasticsearch (it will not start without them),
 Elasticsearch before Kibana, Kibana before Fleet Server (which needs a service
 token minted through it), Fleet Server before the agents (which have nothing
 to enroll against otherwise).
 
-To do just the monitoring half — this leaves the live Nextcloud VM alone:
+To leave the agent targets alone entirely (no CA push, no enrollment):
 
 ```bash
-ansible-playbook playbooks/00-bootstrap.yml --limit monitoring --check --diff
-ansible-playbook playbooks/00-bootstrap.yml --limit monitoring
-ansible-playbook playbooks/20-elastic-certs.yml \
-                 playbooks/25-elasticsearch.yml \
-                 playbooks/30-elasticsearch-security.yml \
-                 playbooks/35-kibana.yml \
-                 playbooks/40-fleet-server.yml \
-                 playbooks/45-exporters.yml \
-                 playbooks/50-elastic-agent.yml
+mise run play playbooks/00-bootstrap.yml --check --diff
+mise run play playbooks/site.yml --limit monitoring
 ```
 
 The bootstrap dry run stops at the data disk on a fresh VM — `--check` cannot
@@ -197,11 +196,12 @@ Kibana is then at `https://kibana.<your zone>` (the `kibana_fqdn` in
 
 `35-kibana.yml` runs `kibana_tls` before `kibana`: certbot obtains a Let's
 Encrypt certificate for `kibana_fqdn` over Cloudflare DNS-01, with the same
-`cloudflare_dns_api_token` Caddy uses for Nextcloud, and Kibana serves it on
-443. certbot's own systemd timer renews it, and the deploy-hook it registered
+`cloudflare_dns_api_token` from this repo's `secrets.yaml` (its own token —
+Caddy on the Nextcloud VM has a separate one), and Kibana serves it on 443.
+certbot's own systemd timer renews it, and the deploy-hook it registered
 copies the new pair in and restarts the container — no cron entry, nothing to
 re-run. If renewal fails because the Cloudflare token changed or expired,
-see [Rotating the Cloudflare API token](NEXTCLOUD.md#rotating-the-cloudflare-api-token-or-a-cert-failed-to-renew).
+see [Rotating the Cloudflare API token](#rotating-the-cloudflare-api-token).
 
 **The A record is yours to set, once, in PiHole** (Local DNS → DNS Records):
 `kibana_fqdn` → the monitoring VM's IP (`terraform output vm_ip`). Issuance
@@ -223,7 +223,7 @@ sudo update-ca-certificates
 
 Set `es_bootstrap_cluster: false` in
 `ansible/inventory/group_vars/monitoring.yml` and re-run
-`playbooks/25-elasticsearch.yml`. `cluster.initial_master_nodes` is a
+`mise run play playbooks/25-elasticsearch.yml`. `cluster.initial_master_nodes` is a
 bootstrap-only setting; leaving it set is how a node can silently form a
 second, separate cluster after a rebuild.
 
@@ -272,8 +272,7 @@ label.
 ## 5. Verify
 
 ```bash
-cd ansible
-ansible-playbook playbooks/99-healthcheck.yml
+mise run play playbooks/99-healthcheck.yml
 ```
 
 It reports cluster health and node count, Kibana's status, every Fleet agent
@@ -362,24 +361,40 @@ capacity — most of what "monitor the NAS hardware" means in practice. What it
 does not carry is **SMART attributes** (reallocated and pending sector
 counts), which is what predicts a disk failure before the pool degrades.
 TrueNAS's own email alerts cover that today (see
-[TrueNAS/README.md](TrueNAS/README.md), Tier 1) and remain the thing that must
+the core repo's [TrueNAS/README.md](https://github.com/colac/homelab-proxmox/blob/main/TrueNAS/README.md), Tier 1) and remain the thing that must
 not be turned off.
 
 ## Secrets
 
-Human-chosen secrets live in the repo-root `secrets.yaml`, SOPS-encrypted with
-age and **committed as ciphertext**; `ansible/.envrc` exports them and
-`inventory/group_vars/` reads them back with `lookup('env', …)`. Everything the
-stack generates itself is cached controller-locally instead, outside git:
+Human-chosen secrets live in this repo's `secrets.yaml`, SOPS-encrypted with
+age and **committed as ciphertext**. Nothing exports them into your shell:
+`mise run play` decrypts them through `.mise/sops-exec` for that one
+`ansible-playbook` run, and `inventory/group_vars/` reads them back with
+`lookup('env', …)`. Everything the stack generates itself is cached
+controller-locally instead, outside git:
 
 | Path | Holds | Why there |
 |---|---|---|
-| `secrets.yaml` | `elastic_password`, `kibana_system_password`, `kibana_encryption_key`, `nextcloud_serverinfo_token`, PVE token, plus `cloudflare_dns_api_token` / `reverse_proxy_acme_email` shared with Nextcloud | Human-chosen |
+| `secrets.yaml` | `elastic_password`, `kibana_system_password`, `kibana_encryption_key`, `nextcloud_serverinfo_token`, PVE token, Kibana's own `cloudflare_dns_api_token` / `acme_email`, and the Proxmox/TFC tokens Terraform uses | Human-chosen |
 | `ansible/.certs/` | Internal CA, node cert and key | Generated; regenerating against an empty cluster is the recovery path |
 | `ansible/.secrets-cache/` | Fleet service token, enrollment API keys | Minted by the API, not chosen |
 
 Losing the caches is recoverable — the roles regenerate them. Committing them
 would not be. See [Secrets](README.md#secrets) for the full scheme.
+
+### Rotating the Cloudflare API token
+
+Kibana's certificate uses this repo's own token; Nextcloud's Caddy has a
+separate one in the workloads repo, so rotating one never touches the other.
+
+```bash
+# 1. Cloudflare → My Profile → API Tokens → roll the token (Zone:DNS:Edit, one zone)
+mise run secrets:edit                        # replace cloudflare_dns_api_token
+mise run secrets:check
+mise run play playbooks/35-kibana.yml        # re-renders certbot's cloudflare.ini
+# 2. Prove renewal works with the new token, on the VM:
+ssh ubuntu@<monitoring-ip> sudo certbot renew --dry-run
+```
 
 ## Operating notes
 
@@ -415,19 +430,21 @@ Elasticsearch, Kibana, Fleet Server and the Elastic Agent. Check a version is
 actually published before using it
 ([release notes](https://www.elastic.co/docs/release-notes)). Elastic's version
 index lists builds days before their images reach `docker.elastic.co`. Also
-bump `elastic_agent_version` in both `packer/*/variables.pkr.hcl` (and the
-fallback in `scripts/30-install-elastic-agent.sh`) so new templates match.
+bump `elastic_agent_version` in the core repo's `packer/*/variables.pkr.hcl`
+(and the fallback in `scripts/30-install-elastic-agent.sh`) so new templates
+match — a separate change there; until it lands, the `elastic_agent` role
+simply reinstalls the newer package on each host.
 
 Roll it out in Elastic's required order: Elasticsearch, then Kibana, then Fleet
 Server, then the agents. Kibana refuses to start against an older
 Elasticsearch, and agents must not be newer than Fleet Server:
 
 ```bash
-ansible-playbook playbooks/25-elasticsearch.yml
-ansible-playbook playbooks/35-kibana.yml
-ansible-playbook playbooks/40-fleet-server.yml
-ansible-playbook playbooks/50-elastic-agent.yml      # every host, Nextcloud's too
-ansible-playbook playbooks/99-healthcheck.yml
+mise run play playbooks/25-elasticsearch.yml
+mise run play playbooks/35-kibana.yml
+mise run play playbooks/40-fleet-server.yml
+mise run play playbooks/50-elastic-agent.yml      # every host, Nextcloud's too
+mise run play playbooks/99-healthcheck.yml
 ```
 
 Each playbook re-renders the compose `.env`, and Compose pulls and recreates
@@ -440,7 +457,7 @@ bad release is fixed by moving forward, not by reverting the pin. Afterwards,
 
 The usual cause is images on the OS disk: Docker's containerd image store
 keeps them in `/var/lib/containerd`, and a VM bootstrapped before
-`docker_data` handled that has it on the 12G root. Confirm on the VM:
+`colac.homelab.docker_data` handled that has it on the 12G root. Confirm on the VM:
 
 ```bash
 df -h /                                   # 100%
@@ -454,12 +471,12 @@ containerd's root onto the data disk, deletes the OS-disk copy, and starts
 everything again:
 
 ```bash
-ansible-playbook playbooks/00-bootstrap.yml --limit monitoring-vm --check --diff
-ansible-playbook playbooks/00-bootstrap.yml --limit monitoring-vm
+mise run play playbooks/00-bootstrap.yml --check --diff
+mise run play playbooks/00-bootstrap.yml
 ```
 
 Then `df -h /` should be down to about 60%, and `docker ps` should show
 every container up. If `/` is still full, the next largest is usually
 `/var/lib/elastic-agent` (about 1G, normal) — grow root from the free
 extents in `ubuntu-vg` rather than deleting from it
-(see [packer/README.md](packer/README.md)).
+(see the core repo's [packer/README.md](https://github.com/colac/homelab-proxmox/blob/main/packer/README.md)).

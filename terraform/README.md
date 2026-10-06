@@ -1,21 +1,22 @@
 # Terraform — monitoring VM
 
-Clones the Packer base template into a single `monitoring` VM and generates the
+Clones the core repo's Packer template into a single `monitoring` VM, using
+the core repo's `base-vm` module pinned to a release tag, and generates the
 Ansible inventory fragment for it. The Elastic Stack that runs *on* the VM
 (single-node Elasticsearch, Kibana, Fleet Server, exporters) is Ansible's job —
-see [../../../MONITORING.md](../../../MONITORING.md) for the end-to-end runbook.
+see [../RUNBOOK.md](../RUNBOOK.md) for the end-to-end runbook.
 
 One VM is the whole point. The six-VM version of this stack lives in
 `homelab-proxmox-elastic`; that topology is more than the 32 GB mini-PC has
 spare alongside Nextcloud. If a change here needs a second VM, it belongs in
 that repo.
 
-> **The Packer template must be rebuilt before this VM is provisioned.**
+> **The template must carry the Elasticsearch prerequisites.**
 > Elasticsearch runs a hard bootstrap check on `vm.max_map_count` and refuses
 > to start below 262144. That setting, the memlock/nofile limits and
-> `/opt/elastic` are baked into `packer/ubuntu-24.04` — a VM cloned from an
-> older image will fail the `common` role's preflight assert with exactly this
-> explanation.
+> `/opt/elastic` are baked into the core repo's Packer templates — a VM cloned
+> from an older image fails the `elastic_preflight` role's assert with exactly
+> this explanation.
 
 ## Sizing
 
@@ -26,14 +27,15 @@ Kibana around 1 GB, and the agent plus exporters a few hundred more.
 `es_heap_size` in `ansible/inventory/group_vars/monitoring.yml` must stay at or
 below half of `memory_mb`. Raise both together, never just the heap.
 
-The 100 GB disk holds the Elasticsearch data directory, so it is the retention
-ceiling. There is no ILM delete phase configured yet — see TODO.md.
+The 100 GB data disk (`data_disk_size`) holds the Elasticsearch data, so it is
+the retention ceiling. There is no ILM delete phase configured yet — see
+[../TODO.md](../TODO.md).
 
 ## Workspace
 
 Terraform Cloud org `colac_homelab`, workspace **`Monitoring`**, **Local**
-execution mode — same as the other projects, because Proxmox is LAN-only and
-HCP's runners cannot reach it. Create the workspace in the app first; `init`
+execution mode — same as every project in the homelab, because Proxmox is
+LAN-only and HCP's runners cannot reach it. Create the workspace in the app first; `init`
 does not create it for you.
 
 ## What it generates
@@ -43,8 +45,8 @@ git-ignored: it holds whatever DHCP address the guest agent reported, which is
 machine state rather than source.
 
 `ansible/inventory/` is a **directory** inventory, so this fragment merges with
-the hand-authored `hosts.yml` instead of replacing it — each project owns one
-file and cannot clobber another project's hosts. `inventory/group_vars/` is
+the hand-authored `hosts.yml` (the agent targets other repos own) instead of
+replacing it — each writer owns one file. `inventory/group_vars/` is
 hand-authored and is never written from here.
 
 The fragment puts the single host into **three groups at once** —
@@ -59,18 +61,22 @@ and resolves ambiguously when a host and a group share a name.
 ## Run it
 
 ```bash
-cd terraform/projects/monitoring
-cp terraform.tfvars.example terraform.tfvars   # then fill in the API token
-terraform init
-terraform plan
-terraform apply
+mise run tf:plan          # init + plan; credentials for this command only
+mise run tf:apply
+mise run tf output vm_ip  # any other terraform command, with credentials
 ```
+
+No `terraform.tfvars` is needed: `.mise/sops-exec terraform` supplies
+`TF_VAR_pm_api_*` from `secrets.yaml`. `terraform.tfvars.example` documents
+the non-secret overrides only.
 
 If `terraform apply` prints the `guest_agent_reported_an_ip` check warning, the
 VM had not finished booting when the guest agent was queried. Wait for it to
 come up and re-run `apply` — the inventory is regenerated with the real
 address.
 
+<!-- The generated table shows the git:: module source as a bare URL. -->
+<!-- markdownlint-disable MD034 -->
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
 
@@ -90,7 +96,7 @@ address.
 
 | Name | Source | Version |
 |------|--------|---------|
-| <a name="module_monitoring"></a> [monitoring](#module\_monitoring) | ../../modules/base-vm | n/a |
+| <a name="module_monitoring"></a> [monitoring](#module\_monitoring) | git::https://github.com/colac/homelab-proxmox.git//terraform/modules/base-vm | v2.0.0 |
 
 ## Resources
 
@@ -103,7 +109,7 @@ address.
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_ansible_inventory_hostname"></a> [ansible\_inventory\_hostname](#input\_ansible\_inventory\_hostname) | Host name used inside the generated Ansible inventory. Deliberately different from vm\_name: Ansible warns and behaves ambiguously when a host and a group share a name, and the group is called `monitoring`. Same reason nextcloud's inventory host is `nextcloud-vm`. | `string` | `"monitoring-vm"` | no |
-| <a name="input_ansible_inventory_path"></a> [ansible\_inventory\_path](#input\_ansible\_inventory\_path) | Where to write the generated Ansible inventory fragment. Relative to this project directory. | `string` | `"../../../ansible/inventory/monitoring.yml"` | no |
+| <a name="input_ansible_inventory_path"></a> [ansible\_inventory\_path](#input\_ansible\_inventory\_path) | Where to write the generated Ansible inventory fragment. Relative to this project directory. | `string` | `"../ansible/inventory/monitoring.yml"` | no |
 | <a name="input_cpu_cores"></a> [cpu\_cores](#input\_cpu\_cores) | Number of vCPUs. Elasticsearch and Kibana are both JVM/Node services that want real cores; 4 is the practical floor for a responsive single node. | `number` | `4` | no |
 | <a name="input_data_disk_size"></a> [data\_disk\_size](#input\_data\_disk\_size) | Docker data disk, mounted at /var/lib/docker. Holds the Elasticsearch esdata volume, so this is the ILM retention ceiling. | `string` | `"100G"` | no |
 | <a name="input_disk0_size"></a> [disk0\_size](#input\_disk0\_size) | OS disk size. Only the OS and /opt/elastic's compose files live here, so it does not need to be large. Must be >= the Packer template's disk — Telmate cannot shrink a cloned disk. | `string` | `"24G"` | no |
@@ -112,7 +118,7 @@ address.
 | <a name="input_pm_api_token_id"></a> [pm\_api\_token\_id](#input\_pm\_api\_token\_id) | This is an API token you have previously created for a specific user. | `string` | n/a | yes |
 | <a name="input_pm_api_token_secret"></a> [pm\_api\_token\_secret](#input\_pm\_api\_token\_secret) | This uuid is only available when the token was initially created. | `string` | n/a | yes |
 | <a name="input_pm_api_url"></a> [pm\_api\_url](#input\_pm\_api\_url) | This is the target Proxmox API endpoint. | `string` | n/a | yes |
-| <a name="input_pm_tls_insecure"></a> [pm\_tls\_insecure](#input\_pm\_tls\_insecure) | Skip TLS verification against the Proxmox API. Set via TF\_VAR\_pm\_tls\_insecure from terraform/.envrc (PROXMOX\_TLS\_INSECURE); true is only needed when the endpoint serves a self-signed certificate. | `bool` | `false` | no |
+| <a name="input_pm_tls_insecure"></a> [pm\_tls\_insecure](#input\_pm\_tls\_insecure) | Skip TLS verification against the Proxmox API. Set via TF\_VAR\_pm\_tls\_insecure by .mise/sops-exec (PROXMOX\_TLS\_INSECURE in mise.toml); true is only needed when the endpoint serves a self-signed certificate. | `bool` | `false` | no |
 | <a name="input_proxmox_node"></a> [proxmox\_node](#input\_proxmox\_node) | Proxmox node to deploy the VM on. | `string` | `"pve"` | no |
 | <a name="input_proxmox_pool"></a> [proxmox\_pool](#input\_proxmox\_pool) | Optional Proxmox resource pool. | `string` | `null` | no |
 | <a name="input_proxmox_storage"></a> [proxmox\_storage](#input\_proxmox\_storage) | Proxmox storage pool for the VM disk and cloud-init drive. | `string` | `"local-lvm"` | no |

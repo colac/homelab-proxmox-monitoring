@@ -1,6 +1,6 @@
 # Every value here arrives as a TF_VAR_* environment variable from
-# terraform/.envrc, which direnv populates by decrypting the repo-root
-# secrets.yaml. No terraform.tfvars is needed, and no token is ever written to
+# .mise/sops-exec (`mise run tf …`), which decrypts the repo-root secrets.yaml
+# for that one command. No terraform.tfvars is needed, and no token is ever written to
 # a file inside the repo.
 provider "proxmox" {
   pm_api_url          = var.pm_api_url
@@ -10,7 +10,8 @@ provider "proxmox" {
 }
 
 module "monitoring" {
-  source       = "../../modules/base-vm"
+  # Pinned to a release tag of the core repo — bump deliberately, read the plan.
+  source       = "git::https://github.com/colac/homelab-proxmox.git//terraform/modules/base-vm?ref=v2.0.0"
   vm_name      = var.vm_name
   proxmox_node = var.proxmox_node
   proxmox_pool = var.proxmox_pool

@@ -1,0 +1,8 @@
+---
+# `mise run lint:ansible`. Must stay green at the production profile.
+profile: production
+# Collections come from `mise run setup` (ansible.cfg collections_path); do
+# not let ansible-lint fetch requirements.yml again on every run.
+offline: true
+exclude_paths:
+  - collections/

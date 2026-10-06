@@ -40,7 +40,7 @@
       exporters_pve_enabled is true but exporters_pve_target,
       pve_exporter_token_id or pve_exporter_token_secret is unset or malformed.
       The token id must be user@realm!tokenname, e.g.
-      pve-exporter@pve!monitoring. See MONITORING.md's "Proxmox host" section.
+      pve-exporter@pve!monitoring. See RUNBOOK.md's "Proxmox host" section.
     quiet: true
   when: exporters_pve_enabled
 
@@ -140,5 +140,5 @@
       - "graphite_exporter is listening, but TrueNAS will not send anything until"
       - "its Reporting -> Exporters entry points at {{ ansible_host }}:{{ exporters_graphite_ingest_port }}"
       - "with prefix 'truenas' and hostname '{{ exporters_truenas_instance }}'."
-      - "See MONITORING.md — TrueNAS is not Ansible-managed."
+      - "See RUNBOOK.md — TrueNAS is not Ansible-managed."
   when: exporters_truenas_enabled
