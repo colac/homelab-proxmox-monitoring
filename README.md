@@ -83,7 +83,7 @@ Fleet-managed agents and the path to OSQuery/Elastic Security were not.
 | `colac.homelab` collection | core → here | `ansible/requirements.yml` `version: v2.0.1` |
 | Agent targets (the hosts to enroll) | workloads → here | `ansible/inventory/hosts.yml` (hand-authored) |
 | `nextcloud_serverinfo_token` minted on the Nextcloud VM | workloads → here | this repo's `secrets.yaml` |
-| DNS: `kibana.<zone>` → this VM | here → PiHole | set by hand in PiHole (see TODO) |
+| DNS: `kibana.<zone>` → this VM | here → core | `pihole_local_records` in core's [`dns/`](https://github.com/colac/homelab-proxmox/blob/main/dns/README.md) — a PR to core |
 
 ## Quick start
 
