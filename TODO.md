@@ -1,7 +1,7 @@
 # TODO / Roadmap
 
 The single place this repo's status lives. When something lands, check it off
-here — `README.md` and `CLAUDE.md` point at this file rather than duplicating
+here — `README.md` and `AGENTS.md` point at this file rather than duplicating
 status inline. Homelab-wide and template items are tracked in the core repo's
 `TODO.md`; Nextcloud and k3s in the workloads repo's.
 
@@ -70,6 +70,14 @@ given up (APM, tracing, the OTel demo).
       `git filter-repo`; the shared roles and module now come from core at a
       pinned tag; mise replaces the Makefile and direnv; `elastic_preflight`
       split from the old `common` role
+- [x] **On core v2.0.1, plan clean.** Applied once: the inventory fragment is
+      now written to `ansible/inventory/monitoring.yml` from `terraform/`, and
+      the VM's CPU moved from the deprecated `cores` into the `cpu { }` block
+      (same 4 cores, `host` type — no reboot). Plans say "No changes"
+- [x] **Docs:** `AGENTS.md` imported by a one-line `CLAUDE.md`; credentials
+      and development docs centralised in core's `docs/`; `mise run
+      deps:dev` also points Terraform at the sibling core through a
+      git-ignored `dev_override.tf`
 - [ ] **Decommission the six-VM Elastic cluster.** `192.168.1.230`–`.235` are
       still running. `cd homelab-proxmox-elastic/terraform && terraform plan
       -destroy` first, and read the plan before confirming
