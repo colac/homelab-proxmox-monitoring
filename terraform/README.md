@@ -96,7 +96,7 @@ address.
 
 | Name | Source | Version |
 |------|--------|---------|
-| <a name="module_monitoring"></a> [monitoring](#module\_monitoring) | git::https://github.com/colac/homelab-proxmox.git//terraform/modules/base-vm | v2.0.0 |
+| <a name="module_monitoring"></a> [monitoring](#module\_monitoring) | git::https://github.com/colac/homelab-proxmox.git//terraform/modules/base-vm | v2.0.1 |
 
 ## Resources
 

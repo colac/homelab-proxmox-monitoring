@@ -11,7 +11,7 @@ provider "proxmox" {
 
 module "monitoring" {
   # Pinned to a release tag of the core repo — bump deliberately, read the plan.
-  source       = "git::https://github.com/colac/homelab-proxmox.git//terraform/modules/base-vm?ref=v2.0.0"
+  source       = "git::https://github.com/colac/homelab-proxmox.git//terraform/modules/base-vm?ref=v2.0.1"
   vm_name      = var.vm_name
   proxmox_node = var.proxmox_node
   proxmox_pool = var.proxmox_pool
