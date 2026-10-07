@@ -130,30 +130,15 @@ agent had not answered yet — wait for the VM to boot and re-run.
 
 ## 2. Fill in the secrets
 
+Every key in `secrets.yaml.example` — the Proxmox and Terraform Cloud tokens,
+the three Elastic values, Kibana's Cloudflare token and ACME email,
+`nextcloud_domain`, and the Nextcloud serverinfo token (minted on the Nextcloud
+VM, so it needs Nextcloud running first). How to issue each:
+[CREDENTIALS.md](https://github.com/colac/homelab-proxmox/blob/main/docs/CREDENTIALS.md).
+
 ```bash
 mise run secrets:edit    # decrypts into VS Code, re-encrypts on save
 mise run secrets:check   # names anything missing; never prints a value
-```
-
-The Elastic values (see `secrets.yaml.example` for the full comments, and
-for the Cloudflare/ACME keys Kibana's certificate needs):
-
-```bash
-openssl rand -hex 32     # kibana_encryption_key
-```
-
-- `elastic_password` — the `elastic` superuser; also your Kibana login.
-- `kibana_system_password` — Kibana's own least-privilege ES account.
-- `kibana_encryption_key` — Fleet encrypts its stored service tokens with this.
-  `POST /api/fleet/setup` fails outright without it.
-- `nextcloud_serverinfo_token` — generate on the Nextcloud VM:
-
-```bash
-ssh ubuntu@<nextcloud-ip>
-sudo docker exec -u www-data nextcloud-aio-nextcloud \
-  php occ config:app:set serverinfo token --value "$(openssl rand -hex 32)"
-sudo docker exec -u www-data nextcloud-aio-nextcloud \
-  php occ config:app:get serverinfo token   # copy into secrets.yaml
 ```
 
 ## 3. Deploy
@@ -201,7 +186,7 @@ Caddy on the Nextcloud VM has a separate one), and Kibana serves it on 443.
 certbot's own systemd timer renews it, and the deploy-hook it registered
 copies the new pair in and restarts the container — no cron entry, nothing to
 re-run. If renewal fails because the Cloudflare token changed or expired,
-see [Rotating the Cloudflare API token](#rotating-the-cloudflare-api-token).
+see [Cloudflare DNS tokens](https://github.com/colac/homelab-proxmox/blob/main/docs/CREDENTIALS.md#cloudflare-dns-tokens).
 
 **The A record is yours to set, once, in PiHole** (Local DNS → DNS Records):
 `kibana_fqdn` → the monitoring VM's IP (`terraform output vm_ip`). Issuance
@@ -327,22 +312,16 @@ Nothing is configured out of the box. The three worth having first:
 Scaffolded but off — `exporters_pve_enabled: false` in
 `inventory/group_vars/monitoring.yml`. To turn it on:
 
-1. Create a **read-only** API token on the Proxmox host. `PVEAuditor` is the
-   whole security boundary: even if the monitoring VM were compromised, this
-   token cannot change anything on the hypervisor.
-
-   ```bash
-   # on the Proxmox host
-   pveum user add pve-exporter@pve --comment "Read-only Prometheus exporter"
-   pveum aclmod / -user pve-exporter@pve -role PVEAuditor
-   pveum user token add pve-exporter@pve monitoring --privsep 0
-   ```
-
-2. Put the printed secret in `secrets.yaml` as `pve_exporter_token_secret`, and
-   confirm `pve_exporter_token_id` matches `pve-exporter@pve!monitoring`.
+1. Issue the read-only `pve-exporter@pve` token and store it as
+   `pve_exporter_token_id` / `pve_exporter_token_secret` — see
+   [Proxmox exporter token](https://github.com/colac/homelab-proxmox/blob/main/docs/CREDENTIALS.md#proxmox-exporter-token). `PVEAuditor` is the
+   whole security boundary: even a compromised monitoring VM cannot change the
+   hypervisor with it.
+2. `mise run secrets:check` — the `ansible` profile then stops listing the two
+   keys as empty.
 3. Set `exporters_pve_enabled: true` and `exporters_pve_target` to the
    Proxmox host's LAN address.
-4. Re-run `playbooks/45-exporters.yml`.
+4. `mise run play playbooks/45-exporters.yml`.
 
 > **One extra step is needed and is not yet written.** `pve-exporter` is a
 > multi-target exporter: it is scraped at `/pve?target=<host>`, not
@@ -366,35 +345,17 @@ not be turned off.
 
 ## Secrets
 
-Human-chosen secrets live in this repo's `secrets.yaml`, SOPS-encrypted with
-age and **committed as ciphertext**. Nothing exports them into your shell:
-`mise run play` decrypts them through `.mise/sops-exec` for that one
-`ansible-playbook` run, and `inventory/group_vars/` reads them back with
-`lookup('env', …)`. Everything the stack generates itself is cached
+Human-chosen secrets live in this repo's `secrets.yaml`, decrypted per command
+by `.mise/sops-exec` — issuing and rotating each one is in core's
+[CREDENTIALS.md](https://github.com/colac/homelab-proxmox/blob/main/docs/CREDENTIALS.md). What the stack generates itself is cached
 controller-locally instead, outside git:
 
-| Path | Holds | Why there |
+| Path | Holds | If lost |
 |---|---|---|
-| `secrets.yaml` | `elastic_password`, `kibana_system_password`, `kibana_encryption_key`, `nextcloud_serverinfo_token`, PVE token, Kibana's own `cloudflare_dns_api_token` / `acme_email`, and the Proxmox/TFC tokens Terraform uses | Human-chosen |
-| `ansible/.certs/` | Internal CA, node cert and key | Generated; regenerating against an empty cluster is the recovery path |
-| `ansible/.secrets-cache/` | Fleet service token, enrollment API keys | Minted by the API, not chosen |
+| `ansible/.certs/` | Internal CA, node cert and key | Regenerated by `es_certs` against an empty cluster |
+| `ansible/.secrets-cache/` | Fleet service token, enrollment API keys | Minted again by `fleet_bootstrap` |
 
-Losing the caches is recoverable — the roles regenerate them. Committing them
-would not be. See [Secrets](README.md#secrets) for the full scheme.
-
-### Rotating the Cloudflare API token
-
-Kibana's certificate uses this repo's own token; Nextcloud's Caddy has a
-separate one in the workloads repo, so rotating one never touches the other.
-
-```bash
-# 1. Cloudflare → My Profile → API Tokens → roll the token (Zone:DNS:Edit, one zone)
-mise run secrets:edit                        # replace cloudflare_dns_api_token
-mise run secrets:check
-mise run play playbooks/35-kibana.yml        # re-renders certbot's cloudflare.ini
-# 2. Prove renewal works with the new token, on the VM:
-ssh ubuntu@<monitoring-ip> sudo certbot renew --dry-run
-```
+Committing either would not be recoverable; losing them is.
 
 ## Operating notes
 
