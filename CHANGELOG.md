@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/colac/homelab-proxmox-monitoring/compare/v1.1.0...v1.2.0) (2026-10-07)
+
+
+### Features
+
+* **mise:** deps:dev also points Terraform at the sibling core ([d945c89](https://github.com/colac/homelab-proxmox-monitoring/commit/d945c89efb42b29d729ee2b2c608e27eae902a9e))
+
 # [1.1.0](https://github.com/colac/homelab-proxmox-monitoring/compare/v1.0.0...v1.1.0) (2026-10-06)
 
 
