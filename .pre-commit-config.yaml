@@ -9,6 +9,12 @@ repos:
       - id: detect-private-key
       - id: check-merge-conflict
       - id: no-commit-to-branch
+      # `terraform fmt` for JSON: 2-space indent, key order kept (it is
+      # meaningful in .claude/settings.json). npm owns the lockfile's format.
+      - id: check-json
+      - id: pretty-format-json
+        args: [--autofix, --indent, "2", --no-sort-keys]
+        exclude: ^package-lock\.json$
 
   # EditorConfig validation
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
