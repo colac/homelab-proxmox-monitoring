@@ -58,9 +58,10 @@ given up (APM, tracing, the OTel demo).
       ingest, which means measuring first
 - [ ] **Alerting rules.** Kibana alerting is available but nothing is
       configured. The three that matter first are in RUNBOOK.md
-- [ ] **Watch DNS.** PiHole is the LAN's only resolver and nothing monitors
-      it. Once the core repo brings it under the pipeline (its TODO), add it
-      to `inventory/hosts.yml` as an agent target
+- [ ] **Watch DNS.** Core now runs Pi-hole as code: `pihole-ct` at
+      `192.168.1.153` (live), and later a Raspberry Pi at `.53`. Nothing
+      monitors either. Add them to `inventory/hosts.yml` as agent targets —
+      the Elastic Agent in an unprivileged LXC needs checking first
 - [ ] **OSQuery, Elastic Defend, Elastic Security.** The reason for choosing
       Elastic over Prometheus in the first place. All need Fleet working first
 

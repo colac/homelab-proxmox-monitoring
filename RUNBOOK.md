@@ -188,8 +188,11 @@ copies the new pair in and restarts the container — no cron entry, nothing to
 re-run. If renewal fails because the Cloudflare token changed or expired,
 see [Cloudflare DNS tokens](https://github.com/colac/homelab-proxmox/blob/main/docs/CREDENTIALS.md#cloudflare-dns-tokens).
 
-**The A record is yours to set, once, in PiHole** (Local DNS → DNS Records):
-`kibana_fqdn` → the monitoring VM's IP (`terraform output vm_ip`). Issuance
+**The A record lives in the core repo**, in `pihole_local_records`
+(`dns/ansible/inventory/group_vars/pihole.yml`, entry `kibana`) — if the VM's
+IP (`mise run tf output vm_ip`) ever changes, update it there with a PR and
+run `mise run dns:play playbooks/10-pihole.yml` in core
+([DNS runbook](https://github.com/colac/homelab-proxmox/blob/main/dns/README.md)). Issuance
 does not need it — DNS-01 only writes a TXT record in Cloudflare — but a
 browser does, and a stale record pointing at an old VM looks exactly like
 Kibana being down. `99-healthcheck.yml` checks the name from your machine with
