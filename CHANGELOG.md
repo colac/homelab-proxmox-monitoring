@@ -1,3 +1,11 @@
+# [1.3.0](https://github.com/colac/homelab-proxmox-monitoring/compare/v1.2.0...v1.3.0) (2026-10-23)
+
+
+### Features
+
+* **ansible:** adopt the homelab update procedure for the monitoring vm ([b7935e0](https://github.com/colac/homelab-proxmox-monitoring/commit/b7935e04312254f97f1c990a5cb00fb8e196606d))
+* **ansible:** enroll core's pi-hole and fix the monitoring agent's exporters ([52edffd](https://github.com/colac/homelab-proxmox-monitoring/commit/52edffdce52bd3fdf7bd315a9a5759c543cde8ea))
+
 # [1.2.0](https://github.com/colac/homelab-proxmox-monitoring/compare/v1.1.0...v1.2.0) (2026-10-07)
 
 
