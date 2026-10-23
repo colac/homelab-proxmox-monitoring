@@ -3,8 +3,9 @@
 #
 # Runs once against the Kibana host. Scripts the Fleet setup a human would
 # otherwise click through the UI wizard for: Fleet's own initialisation, the
-# default output, the Fleet Server policy and host registration, the two agent
-# policies with their integrations, and the enrollment tokens.
+# default output, the Fleet Server policy and host registration, the agent
+# policies (fleet_agent_policies) with their integrations, and the enrollment
+# tokens.
 #
 # Ported from homelab-proxmox-elastic. The APM policy and package policy are
 # gone (no APM here); in their place the monitoring host gets a Prometheus
@@ -178,9 +179,9 @@
   when: _fleet_bootstrap_fleet_host_check.status == 404
   no_log: true
 
-# Two agent policies, because a Fleet agent belongs to exactly one. The
-# monitoring host needs the Prometheus integration to scrape the exporters
-# running beside it; no other host should, so it cannot share the general one.
+# One agent policy per entry in fleet_agent_policies (group_vars/all.yml),
+# because a Fleet agent belongs to exactly one and the hosts need different
+# integrations.
 - name: Check for existing agent policies
   ansible.builtin.uri:
     url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies/{{ item.id }}"
@@ -219,7 +220,7 @@
   when: item.status == 404
   no_log: true
 
-- name: Ensure agent monitoring is enabled on both agent policies
+- name: Ensure agent monitoring is enabled on every agent policy
   ansible.builtin.uri:
     url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/agent_policies/{{ item.id }}"
     method: PUT
@@ -283,30 +284,31 @@
 # ---------------------------------------------------------------------------
 # Package policies (integrations attached to an agent policy)
 #
-# System and Docker are homogeneous — same inputs, differing only in which
-# policy they attach to — so they loop. The Prometheus one is written out
-# separately below because its inputs are entirely different in shape.
+# The ones a policy lists under `packages` (System, Docker) are homogeneous —
+# same inputs, differing only in which policy they attach to — so they loop,
+# one per (policy, package) pair. Prometheus and the Pi-hole logs are written
+# out separately below because their inputs are entirely different in shape.
 #
 # inputs: {} means "Fleet's own default integration config", which is what we
 # want for System and Docker.
 # ---------------------------------------------------------------------------
 
-- name: Check for existing System and Docker package policies
+- name: Check for existing default-config package policies
   ansible.builtin.uri:
-    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/{{ item.0.package }}-{{ item.1.slug }}"
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/{{ item.1 }}-{{ item.0.slug }}"
     validate_certs: false
     user: elastic
     password: "{{ es_elastic_password }}"
     force_basic_auth: true
     status_code: [200, 404]
-  loop: "{{ [{'package': 'system'}, {'package': 'docker'}] | product(_fleet_bootstrap_agent_policies) | list }}"
+  loop: "{{ _fleet_bootstrap_agent_policies | subelements('packages') }}"
   loop_control:
-    label: "{{ item.0.package }}-{{ item.1.slug }}"
+    label: "{{ item.1 }}-{{ item.0.slug }}"
   register: _fleet_bootstrap_base_pkgpolicy_checks
   no_log: true
   check_mode: false
 
-- name: Create the System and Docker package policies
+- name: Create the missing default-config package policies
   ansible.builtin.uri:
     url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies"
     method: POST
@@ -318,23 +320,25 @@
       kbn-xsrf: "true"
     body_format: json
     body:
-      id: "{{ item.item.0.package }}-{{ item.item.1.slug }}"
-      name: "{{ item.item.0.package }}-{{ item.item.1.slug }}"
-      policy_ids: ["{{ item.item.1.id }}"]
+      id: "{{ item.item.1 }}-{{ item.item.0.slug }}"
+      name: "{{ item.item.1 }}-{{ item.item.0.slug }}"
+      policy_ids: ["{{ item.item.0.id }}"]
       package:
-        name: "{{ item.item.0.package }}"
-        version: "{{ (_fleet_bootstrap_package_lookup.results | selectattr('item', 'equalto', item.item.0.package) | first).json.item.version }}"
+        name: "{{ item.item.1 }}"
+        version: "{{ (_fleet_bootstrap_package_lookup.results | selectattr('item', 'equalto', item.item.1) | first).json.item.version }}"
       inputs: {}
     status_code: 200
   loop: "{{ _fleet_bootstrap_base_pkgpolicy_checks.results }}"
   loop_control:
-    label: "{{ item.item.0.package }}-{{ item.item.1.slug }}"
+    label: "{{ item.item.1 }}-{{ item.item.0.slug }}"
   when: item.status == 404
   no_log: true
 
+# Simplified format, so the live scrape targets can be compared with the
+# wanted ones below (the same shape the create body uses).
 - name: Check for an existing Prometheus package policy
   ansible.builtin.uri:
-    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/prometheus-exporters"
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/prometheus-exporters?format=simplified"
     validate_certs: false
     user: elastic
     password: "{{ es_elastic_password }}"
@@ -354,19 +358,9 @@
 # package policy and one scrape schedule. The agent tags each document with
 # service.address, which is what distinguishes TrueNAS metrics from Nextcloud
 # ones downstream.
-- name: Create the Prometheus package policy for the exporters
-  ansible.builtin.uri:
-    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies"
-    method: POST
-    validate_certs: false
-    user: elastic
-    password: "{{ es_elastic_password }}"
-    force_basic_auth: true
-    headers:
-      kbn-xsrf: "true"
-    body_format: json
-    body:
-      id: prometheus-exporters
+- name: Build the Prometheus package policy for the exporters
+  ansible.builtin.set_fact:
+    _fleet_bootstrap_prometheus_body:
       name: prometheus-exporters
       policy_ids: ["{{ monitoring_agent_policy_id }}"]
       package:
@@ -382,10 +376,107 @@
                 hosts: "{{ _fleet_bootstrap_prometheus_targets }}"
                 metrics_path: /metrics
                 period: "{{ exporters_scrape_period }}"
+    # Empty when the policy does not exist yet (404).
+    _fleet_bootstrap_prometheus_live_targets: >-
+      {{ _fleet_bootstrap_prometheus_pkgpolicy_check.json.item.inputs['prometheus-prometheus/metrics'].streams['prometheus.collector'].vars.hosts
+         | default([]) if _fleet_bootstrap_prometheus_pkgpolicy_check.status == 200 else [] }}
+
+- name: Create the Prometheus package policy for the exporters
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body: "{{ _fleet_bootstrap_prometheus_body | combine({'id': 'prometheus-exporters'}) }}"
     status_code: 200
   when:
     - _fleet_bootstrap_prometheus_pkgpolicy_check.status == 404
     - _fleet_bootstrap_prometheus_targets | length > 0
+  no_log: true
+
+# Unlike the other package policies, this one converges: its targets follow
+# which exporters are enabled, and a policy created with the old `localhost`
+# targets must be corrected in place. PUT takes the same simplified body as
+# the create (Kibana 9.5 UpdatePackagePolicyRequestSchema), and only runs when
+# the live targets differ, so a settled policy keeps its revision.
+- name: Update the Prometheus package policy when its targets changed
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/prometheus-exporters"
+    method: PUT
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body: "{{ _fleet_bootstrap_prometheus_body }}"
+    status_code: 200
+  when:
+    - _fleet_bootstrap_prometheus_pkgpolicy_check.status == 200
+    - _fleet_bootstrap_prometheus_targets | length > 0
+    - _fleet_bootstrap_prometheus_live_targets | sort != _fleet_bootstrap_prometheus_targets | sort
+  changed_when: true
+  no_log: true
+
+- name: Check for an existing Pi-hole logs package policy
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies/pihole-logs"
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: _fleet_bootstrap_pihole_pkgpolicy_check
+  no_log: true
+  check_mode: false
+
+# filestream is an *input* package, so its keys follow different rules from
+# Prometheus's — verified, not guessed, against the filestream 2.5.1 manifest
+# (policy template `filestream`, input `filestream`) and Kibana 9.5's Fleet
+# source:
+#   input key   "{policy_template.name}-{input}"       → filestream-filestream
+#               (package_to_package_policy.ts)
+#   stream key  the default dataset, "{package}.{policy_template.name}"
+#               → filestream.filestream (createDefaultDatasetName in
+#               policy_template.ts); the dataset *var* below then renames the
+#               data stream, not the key
+#   vars        stream-level: an input package's policy-template vars become
+#               its single stream's vars
+- name: Create the Pi-hole logs package policy (DNS hosts)
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ kibana_port }}/api/fleet/package_policies"
+    method: POST
+    validate_certs: false
+    user: elastic
+    password: "{{ es_elastic_password }}"
+    force_basic_auth: true
+    headers:
+      kbn-xsrf: "true"
+    body_format: json
+    body:
+      id: pihole-logs
+      name: pihole-logs
+      policy_ids: ["{{ dns_agents_policy_id }}"]
+      package:
+        name: filestream
+        version: "{{ (_fleet_bootstrap_package_lookup.results | selectattr('item', 'equalto', 'filestream') | first).json.item.version }}"
+      inputs:
+        filestream-filestream:
+          enabled: true
+          streams:
+            filestream.filestream:
+              enabled: true
+              vars:
+                paths: "{{ _fleet_bootstrap_pihole_log_paths }}"
+                data_stream.dataset: "{{ _fleet_bootstrap_pihole_dataset }}"
+    status_code: 200
+  when: _fleet_bootstrap_pihole_pkgpolicy_check.status == 404
   no_log: true
 
 # ---------------------------------------------------------------------------

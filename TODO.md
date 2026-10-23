@@ -61,7 +61,10 @@ given up (APM, tracing, the OTel demo).
 - [ ] **Watch DNS.** Core now runs Pi-hole as code: `pihole-ct` at
       `192.168.1.153` (live), and later a Raspberry Pi at `.53`. Nothing
       monitors either. Add them to `inventory/hosts.yml` as agent targets —
-      the Elastic Agent in an unprivileged LXC needs checking first
+      the Elastic Agent in an unprivileged LXC needs checking first.
+      `pihole-ct` enrolled and healthy on `dns-agents-policy` (2026-10-08);
+      the Pi and the Proxmox node remain. Steps,
+      with the Proxmox node: [docs/rollout-pve-and-pihole.md](docs/rollout-pve-and-pihole.md)
 - [ ] **OSQuery, Elastic Defend, Elastic Security.** The reason for choosing
       Elastic over Prometheus in the first place. All need Fleet working first
 

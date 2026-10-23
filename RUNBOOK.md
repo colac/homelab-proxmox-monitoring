@@ -144,7 +144,7 @@ mise run secrets:check   # names anything missing; never prints a value
 ## 3. Deploy
 
 Agent targets other repos own go in `ansible/inventory/hosts.yml` (copy
-`hosts.yml.example`) — today the Nextcloud VM. Then:
+`hosts.yml.example`) — today the Nextcloud VM and core's Pi-hole container. Then:
 
 ```bash
 mise run inventory       # monitoring-vm in monitoring/elasticsearch/kibana; agents listed

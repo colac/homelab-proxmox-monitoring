@@ -81,7 +81,7 @@ Fleet-managed agents and the path to OSQuery/Elastic Security were not.
 | Template `ubuntu-26.04-template`, with the ES prerequisites baked in | core → here | `terraform/variables.tf` `template_name` |
 | `base-vm` module | core → here | `terraform/main.tf` `?ref=v2.0.1` |
 | `colac.homelab` collection | core → here | `ansible/requirements.yml` `version: v2.0.1` |
-| Agent targets (the hosts to enroll) | workloads → here | `ansible/inventory/hosts.yml` (hand-authored) |
+| Agent targets (the hosts to enroll) | core, workloads → here | `ansible/inventory/hosts.yml` (hand-authored) |
 | `nextcloud_serverinfo_token` minted on the Nextcloud VM | workloads → here | this repo's `secrets.yaml` |
 | DNS: `kibana.<zone>` → this VM | here → core | `pihole_local_records` in core's [`dns/`](https://github.com/colac/homelab-proxmox/blob/main/dns/README.md) — a PR to core |
 

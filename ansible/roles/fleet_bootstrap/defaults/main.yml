@@ -1,35 +1,34 @@
 ---
 # defaults file for fleet_bootstrap
 #
-# fleet_server_port, fleet_server_policy_id, fleet_server_host_id and the two
-# agent policy IDs live in inventory/group_vars/ instead — the elastic_agent
-# role reads them too, from other hosts, where role defaults are not visible.
+# fleet_server_port, fleet_server_policy_id, fleet_server_host_id and the
+# agent policy table (fleet_agent_policies) live in inventory/group_vars/
+# instead — the elastic_agent role reads them too, from other hosts, where
+# role defaults are not visible.
 
-# The two agent policies every host is assigned to. Kept as one list so the
-# create/monitoring/enrollment-token steps can loop over it instead of
-# repeating four near-identical task blocks per policy.
-#
-#   slug       suffix for package-policy IDs (system-homelab, docker-homelab…)
-#   token_file name of the cached enrollment token under
-#              es_secrets_local_cache_dir; the elastic_agent role reads the
-#              matching one back when enrolling each host
-_fleet_bootstrap_agent_policies:
-  - id: "{{ homelab_agents_policy_id }}"
-    name: "Homelab Agents Policy"
-    slug: homelab
-    token_file: homelab_agents_enrollment_token.txt
-  - id: "{{ monitoring_agent_policy_id }}"
-    name: "Monitoring Agent Policy"
-    slug: monitoring
-    token_file: monitoring_agent_enrollment_token.txt
+# The agent policies as a list, so the create/monitoring/enrollment-token
+# steps can loop over it instead of repeating near-identical task blocks per
+# policy. Each entry: id, name, slug, token_file, packages (see all.yml).
+_fleet_bootstrap_agent_policies: "{{ fleet_agent_policies.values() | list }}"
+
+# Pi-hole's logs, shipped by the DNS policy's Custom Logs (filestream)
+# integration: the query log (every query, reply and block) and FTL's own.
+# The dataset becomes the data stream logs-pihole-default; no `-` allowed.
+_fleet_bootstrap_pihole_log_paths:
+  - /var/log/pihole/pihole.log
+  - /var/log/pihole/FTL.log
+_fleet_bootstrap_pihole_dataset: pihole
 
 # Integration packages to install. `prometheus` is what lets the agent scrape
 # the exporters — Elastic ships no TrueNAS or Nextcloud integration, so those
-# arrive as Prometheus metrics or not at all.
+# arrive as Prometheus metrics or not at all. `filestream` (Custom Logs) is how
+# the DNS policy reads Pi-hole's log files — there is no Pi-hole integration
+# either.
 _fleet_bootstrap_packages:
   - system
   - docker
   - prometheus
+  - filestream
 
 # Exporters the Prometheus integration scrapes, built from whichever are
 # enabled. Host-loopback addresses: the exporters publish their metrics ports
@@ -37,8 +36,15 @@ _fleet_bootstrap_packages:
 # a container), so it reaches them without any of them being exposed to the
 # LAN. No scheme — the metricbeat prometheus module's `hosts` var takes
 # host:port, per the package manifest.
+#
+# 127.0.0.1, never `localhost`: the templates boot with ipv6.disable=1, and
+# `localhost` also resolves to ::1. Go tries ::1 first, falls back to
+# 127.0.0.1, and when both fail reports the *IPv6* error (dialParallel returns
+# the primary's error) — so a down exporter showed up in Fleet as "dial tcp
+# [::1]:9108: address family not supported by protocol", hiding the real
+# "connection refused".
 _fleet_bootstrap_prometheus_targets: >-
   {{
-    ([('localhost:' ~ exporters_graphite_metrics_port) ] if (exporters_truenas_enabled | default(false)) else [])
-    + ([('localhost:' ~ exporters_nextcloud_port)] if (exporters_nextcloud_enabled | default(false)) else [])
+    ([('127.0.0.1:' ~ exporters_graphite_metrics_port) ] if (exporters_truenas_enabled | default(false)) else [])
+    + ([('127.0.0.1:' ~ exporters_nextcloud_port)] if (exporters_nextcloud_enabled | default(false)) else [])
   }}

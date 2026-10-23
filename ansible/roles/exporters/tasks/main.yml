@@ -61,13 +61,17 @@
     - "{{ exporters_dir }}"
     - "{{ exporters_dir }}/graphite"
 
+# World-readable on purpose: the graphite_exporter image runs as `nobody`
+# (USER nobody in its Dockerfile) and exits 1 when it cannot load the mapping,
+# so at 0640 root:root the container crash-looped and port 9108 never opened.
+# The file is vendored from a public repo — nothing in it is secret.
 - name: Install the TrueNAS Graphite-to-Prometheus mapping
   ansible.builtin.copy:
     src: graphite_mapping.conf
     dest: "{{ exporters_dir }}/graphite/graphite_mapping.conf"
     owner: root
     group: root
-    mode: "0640"
+    mode: "0644"
   when: exporters_truenas_enabled
   notify: Restart exporters
 
@@ -118,6 +122,12 @@
     state: present
     pull: missing
     remove_orphans: true
+
+# Apply pending restarts (a changed mapping, env file or compose file) before
+# the readiness check, so it tests the configuration just written rather than
+# a container still running — or crash-looping on — the previous one.
+- name: Restart the exporters now if their configuration changed
+  ansible.builtin.meta: flush_handlers
 
 - name: Wait for each enabled exporter to answer on loopback
   ansible.builtin.uri:
