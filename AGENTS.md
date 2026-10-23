@@ -40,7 +40,9 @@ mise run secrets:check   # missing key names only
 ```
 
 Need credentials — ask the human first: `mise run tf:plan`, `mise run tf:apply`,
-`mise run play <playbook> [args]`.
+`mise run play <playbook> [args]`. No credentials, but they reach live
+machines — ask first too: `mise run update`, `mise run update:apply` (the
+update procedure, core's `docs/UPDATES.md`).
 
 ## Rules
 

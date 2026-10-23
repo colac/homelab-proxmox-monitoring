@@ -101,7 +101,8 @@
       "Edit(.mise/**)",
       "Write(.mise/**)",
       "Edit(mise.toml)",
-      "Write(mise.toml)"
+      "Write(mise.toml)",
+      "Bash(mise run update*)"
     ]
   }
 }

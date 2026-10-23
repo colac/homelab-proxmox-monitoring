@@ -1,0 +1,17 @@
+---
+# The Proxmox node, for the update procedure only (`mise run update`): it
+# snapshots the monitoring VM there, as root, and identifies the VM in the
+# node's guest list. Never updated from this repo. Copy to proxmox.yml
+# (git-ignored: the address is machine state).
+#
+# Kept out of inventory/ on purpose: 20-elastic-certs and 50-elastic-agent
+# run on `all`, and must never reach the node by accident. Only the update
+# tasks pass this file (-i).
+all:
+  children:
+    proxmox_hosts:
+      hosts:
+        pve:
+          ansible_host: 192.168.1.169
+          ansible_user: root
+          ansible_become: false

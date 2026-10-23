@@ -1,0 +1,56 @@
+---
+# This repo's update procedure — playbook colac.homelab.update (core), run by
+# `mise run update`; the rules are core's docs/UPDATES.md. OS packages are
+# always covered; below is everything else on the VM. A running container no
+# component claims is reported as UNTRACKED.
+update_kind: vm
+# The VM's name on Proxmox (terraform/ vm_name): snapshots act on that guest.
+update_proxmox_name: monitoring
+
+update_checks:
+  - systemd: [docker]
+  # The exporters 45-exporters.yml deploys: the same flags decide
+  # (group_vars/monitoring.yml; the PVE one is off until its token exists).
+  - containers: >-
+      {{ ['elasticsearch', 'kibana', 'fleet-server']
+         + (['exporter-graphite'] if exporters_truenas_enabled | bool else [])
+         + (['exporter-nextcloud'] if exporters_nextcloud_enabled | bool else [])
+         + (['exporter-pve'] if exporters_pve_enabled | bool else []) }}
+
+update_components:
+  # stack_version is the single pin; upgrades are deliberate (ES never
+  # downgrades), so the report tracks the running minor line and only notes
+  # a newer one.
+  - name: Elastic Stack (ES, Kibana, Fleet)
+    hosts: [monitoring-vm]
+    containers: "^(elasticsearch|kibana|fleet-server)$"
+    version: {image_tag_of: kibana}
+    upstream: {github: elastic/kibana, track: minor}
+    apply: "bump stack_version, then RUNBOOK.md § Upgrading the stack"
+
+  - name: Elastic Agent (this VM)
+    hosts: [monitoring-vm]
+    version: {command: [dpkg-query, -W, "-f=${Version}", elastic-agent]}
+    upstream: {github: elastic/kibana, track: minor}
+    apply: "follows stack_version: 50-elastic-agent.yml (every host's agent)"
+
+  - name: graphite-exporter
+    hosts: [monitoring-vm]
+    containers: "^exporter-graphite$"
+    version: {image_tag_of: exporter-graphite}
+    upstream: {github: prometheus/graphite_exporter}
+    apply: "bump exporters_graphite_image, then 45-exporters.yml"
+
+  - name: nextcloud-exporter
+    hosts: [monitoring-vm]
+    containers: "^exporter-nextcloud$"
+    version: {image_tag_of: exporter-nextcloud}
+    upstream: {github: xperimental/nextcloud-exporter}
+    apply: "bump exporters_nextcloud_image, then 45-exporters.yml"
+
+  - name: pve-exporter
+    hosts: [monitoring-vm]
+    containers: "^exporter-pve$"
+    version: {image_tag_of: exporter-pve}
+    upstream: {github: prometheus-pve/prometheus-pve-exporter}
+    apply: "bump exporters_pve_image, then 45-exporters.yml"

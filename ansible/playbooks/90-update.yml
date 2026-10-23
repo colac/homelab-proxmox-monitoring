@@ -1,0 +1,6 @@
+---
+# This repo's update procedure: core's shared playbook against this
+# inventory. Run it through `mise run update` (report) or
+# `mise run update:apply`; see core's docs/UPDATES.md.
+- name: Update procedure (colac.homelab.update)
+  ansible.builtin.import_playbook: colac.homelab.update
