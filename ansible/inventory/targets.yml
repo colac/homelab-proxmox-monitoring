@@ -1,0 +1,10 @@
+---
+# What this repo's update procedure covers (`mise run update`): the
+# monitoring VM only — the agent hosts in `agents` belong to their own repos'
+# procedures. The Proxmox node, where the VM's snapshots are taken, is only in
+# ../update/proxmox.yml, which the update tasks add.
+all:
+  children:
+    update_targets:
+      children:
+        monitoring: {}

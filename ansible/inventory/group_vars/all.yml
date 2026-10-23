@@ -103,9 +103,44 @@ cloudflare_dns_api_token: "{{ lookup('env', 'CLOUDFLARE_DNS_API_TOKEN') }}"
 # ---------------------------------------------------------------------------
 # Fleet agent policies
 #
-# Two policies, because a Fleet agent belongs to exactly one. The monitoring
-# VM needs the Prometheus integration to scrape the exporters running on it;
-# no other host should, so it cannot share the general policy.
+# A Fleet agent belongs to exactly one policy, so hosts that need different
+# integrations need different policies: the monitoring VM runs the Prometheus
+# integration against the exporters beside it; DNS hosts have no Docker and
+# ship Pi-hole's logs instead.
+#
+# fleet_agent_policies is the one table both sides read: fleet_bootstrap
+# creates every entry (policy, package policies, enrollment token) and
+# elastic_agent enrolls each host into the entry its `elastic_agent_policy`
+# host variable names — `monitoring` for the monitoring VM, `homelab` for any
+# host that sets nothing.
+#
+#   id          Fleet's ID for the policy (fixed, so creation is idempotent)
+#   slug        suffix for its package-policy IDs (system-homelab, …)
+#   token_file  its cached enrollment token, under es_secrets_local_cache_dir
+#   packages    integrations attached with Fleet's defaults (inputs: {});
+#               ones that need real config (Prometheus, Pi-hole logs) are
+#               written out separately in fleet_bootstrap
 # ---------------------------------------------------------------------------
 homelab_agents_policy_id: homelab-agents-policy
 monitoring_agent_policy_id: monitoring-agent-policy
+dns_agents_policy_id: dns-agents-policy
+
+fleet_agent_policies:
+  homelab:
+    id: "{{ homelab_agents_policy_id }}"
+    name: "Homelab Agents Policy"
+    slug: homelab
+    token_file: homelab_agents_enrollment_token.txt
+    packages: [system, docker]
+  monitoring:
+    id: "{{ monitoring_agent_policy_id }}"
+    name: "Monitoring Agent Policy"
+    slug: monitoring
+    token_file: monitoring_agent_enrollment_token.txt
+    packages: [system, docker]
+  dns:
+    id: "{{ dns_agents_policy_id }}"
+    name: "DNS Agents Policy"
+    slug: dns
+    token_file: dns_agents_enrollment_token.txt
+    packages: [system]

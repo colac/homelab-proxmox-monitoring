@@ -60,16 +60,31 @@
         path: "/tmp/elastic-agent-{{ stack_version }}-{{ _elastic_agent_dpkg_arch.stdout }}.deb"
         state: absent
 
-# A Fleet agent belongs to exactly one policy. The monitoring host gets its own
-# because it is the only one that should run the Prometheus integration against
-# the exporters sitting beside it.
-- name: Determine this host's Fleet agent policy and enrollment token file
+# A Fleet agent belongs to exactly one policy: the entry of
+# fleet_agent_policies (group_vars/all.yml) that the host variable
+# elastic_agent_policy names. Unset, the monitoring VM gets `monitoring` (the
+# only policy with the Prometheus integration for the exporters beside it) and
+# every other host `homelab`.
+#
+# The policy applies at enrollment only. Changing elastic_agent_policy on a
+# host that is already enrolled does nothing here (the marker below skips
+# enrollment) — move it in Kibana: Fleet → Agents → Assign to new policy.
+- name: Determine this host's Fleet agent policy
   ansible.builtin.set_fact:
-    _elastic_agent_policy_id: >-
-      {{ monitoring_agent_policy_id if ('monitoring' in group_names) else homelab_agents_policy_id }}
-    _elastic_agent_token_file: >-
-      {{ 'monitoring_agent_enrollment_token.txt' if ('monitoring' in group_names)
-         else 'homelab_agents_enrollment_token.txt' }}
+    _elastic_agent_policy_key: >-
+      {{ elastic_agent_policy | default('monitoring' if 'monitoring' in group_names else 'homelab') }}
+
+- name: Fail on an unknown elastic_agent_policy
+  ansible.builtin.assert:
+    that: _elastic_agent_policy_key in fleet_agent_policies
+    fail_msg: >-
+      elastic_agent_policy '{{ _elastic_agent_policy_key }}' on {{ inventory_hostname }}
+      is not one of {{ fleet_agent_policies.keys() | list }} (group_vars/all.yml)
+    quiet: true
+
+- name: Look up the policy's enrollment token file
+  ansible.builtin.set_fact:
+    _elastic_agent_token_file: "{{ fleet_agent_policies[_elastic_agent_policy_key].token_file }}"
 
 # Self-contained marker for idempotency, deliberately not inferring enrollment
 # state from Elastic's own internal files (fragile, undocumented shape) or from

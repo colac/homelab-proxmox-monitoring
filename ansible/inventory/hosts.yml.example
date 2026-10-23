@@ -1,12 +1,14 @@
 ---
 # Agent targets: hosts OTHER repos own that this repo enrolls with Fleet.
 # Copy to hosts.yml (git-ignored) and set each ansible_host to the address the
-# owning repo's Terraform printed (`terraform output ansible_inventory_line`).
+# owning repo's Terraform printed (`terraform output ansible_inventory_line`;
+# core's dns/ writes dns/ansible/inventory/pihole.yml).
 #
 # The monitoring VM itself is not listed here — Terraform generates
 # inventory/monitoring.yml for it. Hosts in `agents` only see the plays that
-# run on `all` (20-elastic-certs: the CA; 50-elastic-agent: enrollment, with
-# the homelab-agents policy). Nothing here prepares their disks or Docker.
+# run on `all` (20-elastic-certs: the CA; 50-elastic-agent: enrollment, into
+# the policy named by elastic_agent_policy — `homelab` when unset; the choices
+# are fleet_agent_policies in group_vars/all.yml). Nothing here prepares their disks or Docker.
 all:
   children:
     agents:
@@ -14,3 +16,14 @@ all:
         nextcloud-vm:
           ansible_host: 192.168.1.50
           ansible_user: ubuntu
+        # Core's Pi-hole container (homelab-proxmox/dns). Ansible connects as
+        # its root with the deploy key core's Terraform authorised. Already
+        # root, so become is off (core's dns/ Ansible never uses sudo there);
+        # an inventory variable outranks the roles' `become: true` keyword.
+        pihole-ct:
+          ansible_host: 192.168.1.153
+          ansible_user: root
+          ansible_become: false
+          # Fleet policy (group_vars/all.yml fleet_agent_policies): System +
+          # Pi-hole's logs, no Docker.
+          elastic_agent_policy: dns

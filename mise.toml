@@ -175,6 +175,19 @@ description = "SSH reachability of every host in the inventory"
 dir = "{{config_root}}/ansible"
 run = "ansible all -m ping"
 
+# The update procedure for the monitoring VM (core's colac.homelab.update;
+# core's docs/UPDATES.md). No credentials: SSH keys only. Extra args go to
+# ansible-playbook. update/proxmox.yml adds the Proxmox node for snapshots.
+[tasks.update]
+description = "Report what the monitoring VM and its containers need; changes nothing"
+dir = "{{config_root}}/ansible"
+run = "ansible-playbook -i inventory/ -i update/proxmox.yml playbooks/90-update.yml"
+
+[tasks."update:apply"]
+description = "Snapshot the monitoring VM, then apt and health checks (-e update_reboot=true to reboot)"
+dir = "{{config_root}}/ansible"
+run = "ansible-playbook -i inventory/ -i update/proxmox.yml playbooks/90-update.yml -e update_apply=true"
+
 [tasks.play]
 description = "ansible-playbook with credentials: mise run play playbooks/site.yml --check"
 dir = "{{config_root}}/ansible"

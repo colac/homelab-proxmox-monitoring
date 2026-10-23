@@ -144,7 +144,7 @@ mise run secrets:check   # names anything missing; never prints a value
 ## 3. Deploy
 
 Agent targets other repos own go in `ansible/inventory/hosts.yml` (copy
-`hosts.yml.example`) — today the Nextcloud VM. Then:
+`hosts.yml.example`) — today the Nextcloud VM and core's Pi-hole container. Then:
 
 ```bash
 mise run inventory       # monitoring-vm in monitoring/elasticsearch/kibana; agents listed
@@ -388,6 +388,11 @@ Watch `/var/lib/docker` on the VM and set an ILM delete phase before the
 100 GB data disk fills.
 
 ### Upgrading the stack
+
+`mise run update` reports when a newer patch of the running line exists (and
+notes a newer minor line). It never changes the stack itself: that is the pin
+below. The same command, `update:apply`, keeps the VM's OS packages current
+(core's `docs/UPDATES.md`).
 
 `stack_version` in `ansible/inventory/group_vars/all.yml` is the single pin for
 Elasticsearch, Kibana, Fleet Server and the Elastic Agent. Check a version is
