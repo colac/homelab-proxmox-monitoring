@@ -79,8 +79,8 @@ Fleet-managed agents and the path to OSQuery/Elastic Security were not.
 | Contract | Direction | Where it is pinned |
 |---|---|---|
 | Template `ubuntu-26.04-template`, with the ES prerequisites baked in | core → here | `terraform/variables.tf` `template_name` |
-| `base-vm` module | core → here | `terraform/main.tf` `?ref=v2.2.2` |
-| `colac.homelab` collection | core → here | `ansible/requirements.yml` `version: v2.2.2` |
+| `base-vm` module | core → here | `terraform/main.tf` `?ref=v2.3.0` |
+| `colac.homelab` collection | core → here | `ansible/requirements.yml` `version: v2.3.0` |
 | Agent targets (the hosts to enroll) | core, workloads → here | `ansible/inventory/hosts.yml` (hand-authored) |
 | Update procedure (`colac.homelab.update`): this VM's targets, components and checks | core → here | `ansible/playbooks/90-update.yml`, `ansible/inventory/group_vars/update_targets.yml` |
 | The Proxmox node, for this VM's pre-update snapshots | core → here | `ansible/update/proxmox.yml` (hand-authored, git-ignored) |
