@@ -51,6 +51,8 @@ update procedure, core's `docs/UPDATES.md`).
   `sops decrypt` or `.mise/sops-exec`. Refer to secrets by key name
   (`secrets.yaml.example`) and use `mise run secrets:check`. New secret → core's
   `docs/CREDENTIALS.md` § Adding a secret.
+  Never commit with `--no-verify`: the `sops-encrypted` pre-commit hook is
+  what keeps a plaintext secret out of these public repos.
 - **Generated Elastic material is not a secret to manage:** `ansible/.certs/`
   and `ansible/.secrets-cache/` are git-ignored machine state. Never move them
   into `secrets.yaml` or commit them.

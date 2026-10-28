@@ -84,6 +84,24 @@ repos:
       - id: shellcheck
         args: [-x, -S, warning]
 
+  # Secrets: every secrets.yaml stays SOPS ciphertext and keeps every key the
+  # tasks need. Neither hook prints a value.
+  - repo: local
+    hooks:
+      - id: sops-encrypted
+        name: secrets.yaml is SOPS-encrypted throughout
+        entry: scripts/check-sops-encrypted.py
+        language: script
+        files: (^|/)secrets\.yaml$
+      # Decrypts with the age key, so it runs only when a secrets file or the
+      # helper that lists the required keys changes.
+      - id: secrets-check
+        name: secrets.yaml has every required key (secrets:check)
+        entry: mise run secrets:check
+        language: system
+        files: (^|/)secrets\.yaml$|^\.mise/
+        pass_filenames: false
+
 #  # Check for secrets
 #  - repo: https://github.com/gitleaks/gitleaks
 #    rev: v8.18.2
