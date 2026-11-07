@@ -98,7 +98,7 @@ fleet_server_host_id: fleet-server-default
 exporters_dir: /opt/exporters
 
 exporters_graphite_image: "prom/graphite-exporter:v0.17.0"
-exporters_nextcloud_image: "xperimental/nextcloud-exporter:0.9.1"
+exporters_nextcloud_image: "xperimental/nextcloud-exporter:0.9.2"
 exporters_pve_image: "prompve/prometheus-pve-exporter:3.10.0"
 
 # How often the agent scrapes them. Slower than Prometheus' usual 15s because
