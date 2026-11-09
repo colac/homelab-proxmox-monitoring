@@ -64,7 +64,7 @@ flowchart LR
 | Path | How | Why |
 |---|---|---|
 | Every VM | Elastic Agent, Fleet-managed, System + Docker integrations | Policy is pushed from Kibana, so adding an integration is not a playbook change |
-| TrueNAS | Reporting Exporter → Graphite → `graphite_exporter` → agent's Prometheus integration | Not Ansible-managed, cannot take an agent |
+| TrueNAS | Reporting Exporter → Graphite → `graphite_exporter` → agent's Prometheus integration | Cannot take an agent; the exporter is declared in core's TrueNAS Ansible |
 | Nextcloud app metrics | `nextcloud-exporter` → Prometheus integration | Elastic ships no integration for it |
 | Proxmox host | `prometheus-pve-exporter` | Scaffolded, off — see [TODO.md](TODO.md) |
 
