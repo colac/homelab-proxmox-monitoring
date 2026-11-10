@@ -36,7 +36,7 @@ es_node_name: "{{ inventory_hostname }}"
 # and re-run: cluster.initial_master_nodes is a bootstrap-only setting and
 # leaving it set is how a node can silently form a second, separate cluster
 # after a rebuild.
-es_bootstrap_cluster: true
+es_bootstrap_cluster: false
 
 # A single node cannot place replica shards anywhere, so every index that asks
 # for one sits at yellow forever and cluster health never reaches green. The
@@ -109,8 +109,8 @@ exporters_scrape_period: "60s"
 # TrueNAS. Metrics arrive by push: TrueNAS's own Reporting -> Exporters
 # feature speaks the Graphite line protocol at the ingest port below, and
 # graphite_exporter translates it to Prometheus for the agent to scrape.
-# TrueNAS is not Ansible-managed, so configuring its side is a documented
-# manual step — see RUNBOOK.md.
+# Its side is declared in core's TrueNAS Ansible (truenas_reporting_exporters),
+# except netdata's config file, a manual step — see RUNBOOK.md.
 exporters_truenas_enabled: true
 exporters_truenas_host: "192.168.1.214"
 # Must match the "Hostname" field in the TrueNAS exporter config — the mapping

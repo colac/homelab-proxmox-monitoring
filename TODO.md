@@ -31,9 +31,10 @@ given up (APM, tracing, the OTel demo).
       integration for either
 - [x] **A real certificate for Kibana.** `kibana_tls` ported from the six-VM
       repo: certbot + Cloudflare DNS-01 for `kibana.<zone>`, served on 443
-- [ ] **Run it live.** Everything above is validated by rendering and linting,
-      not by a real deployment. The six-VM repo's history is a list of bugs
-      that only appeared on a live run; expect some here too
+- [x] **Run it live.** Elasticsearch, Kibana, Fleet Server and the exporters
+      run on the VM at 9.5.6; agents on the Nextcloud VM and `pihole-ct` are
+      healthy. `es_bootstrap_cluster` is off since 2026-11-10, so
+      `cluster.initial_master_nodes` is no longer set
 - [ ] **Proxmox host metrics.** `prometheus-pve-exporter` is in the exporters
       role but `exporters_pve_enabled` is `false`. Needs a read-only
       `PVEAuditor` token, *and* its own Prometheus package policy — it is a
@@ -82,9 +83,10 @@ given up (APM, tracing, the OTel demo).
       and development docs centralised in core's `docs/`; `mise run
       deps:dev` also points Terraform at the sibling core through a
       git-ignored `dev_override.tf`
-- [ ] **Decommission the six-VM Elastic cluster.** `192.168.1.230`–`.235` are
-      still running. `cd homelab-proxmox-elastic/terraform && terraform plan
-      -destroy` first, and read the plan before confirming
+- [x] **Decommission the six-VM Elastic cluster.** `192.168.1.230`–`.235` no
+      longer exist on the node (checked 2026-11-10). If the elastic repo's
+      Terraform workspace still lists them, `terraform state list` there shows
+      what to remove
 - [ ] **A dedicated Proxmox token for this repo** (`terraform@pve!terraform-monitoring`)
       so revoking the workloads one cannot break this one
 - [ ] **A read-only agent identity.** A separate age key and a

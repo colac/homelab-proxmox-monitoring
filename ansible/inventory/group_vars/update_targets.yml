@@ -21,12 +21,22 @@ update_components:
   # stack_version is the single pin; upgrades are deliberate (ES never
   # downgrades), so the report tracks the running minor line and only notes
   # a newer one.
-  - name: Elastic Stack (ES, Kibana, Fleet)
+  - name: Elastic Stack (ES, Kibana)
     hosts: [monitoring-vm]
-    containers: "^(elasticsearch|kibana|fleet-server)$"
+    containers: "^(elasticsearch|kibana)$"
     version: {image_tag_of: kibana}
     upstream: {github: elastic/kibana, track: minor}
     apply: "bump stack_version, then RUNBOOK.md § Upgrading the stack"
+
+  # Its own row, read from its own container: an upgrade that skips
+  # 40-fleet-server.yml leaves Fleet Server behind Kibana and the agents, and
+  # a version read from kibana would hide that.
+  - name: Fleet Server
+    hosts: [monitoring-vm]
+    containers: "^fleet-server$"
+    version: {image_tag_of: fleet-server}
+    upstream: {github: elastic/kibana, track: minor}
+    apply: "follows stack_version: 40-fleet-server.yml"
 
   - name: Elastic Agent (this VM)
     hosts: [monitoring-vm]

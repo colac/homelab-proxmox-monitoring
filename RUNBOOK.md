@@ -81,6 +81,7 @@ Three ingestion paths, and the reason for each:
 | Nextcloud app — users, shares, apps, free space | `nextcloud-exporter` → Prometheus integration | Live |
 | TrueNAS — pools, disks, ZFS, network, sensors | TrueNAS Reporting Exporter → `graphite_exporter` → Prometheus integration | Live |
 | Monitoring VM itself | Elastic Agent (it watches itself) | Live |
+| Pi-hole container — CPU, RAM, disk, query and FTL logs | Elastic Agent, System + Custom Logs (`dns-agents-policy`) | Live |
 | **Proxmox host** — node CPU/RAM, guest states, storage | `prometheus-pve-exporter` | **Scaffolded, off** |
 | Uptime / TLS expiry probes | Elastic Synthetics | **Not yet** — see TODO.md |
 
