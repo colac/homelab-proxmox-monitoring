@@ -90,5 +90,6 @@ update procedure, core's `docs/UPDATES.md`).
 - **`stack_version` in `group_vars/all.yml` is the single Elastic pin.** Roll
   out ES → Kibana → Fleet → agents; Elasticsearch never downgrades. Check the
   images exist on `docker.elastic.co` first.
-- **TrueNAS pushes Graphite; it is not scraped**, and its
+- **TrueNAS pushes Graphite; it is not scraped.** Its Reporting Exporter is
+  declared in core's TrueNAS Ansible (`truenas_reporting_exporters`); its
   `/etc/netdata/netdata.conf` is a manual step a TrueNAS update undoes.

@@ -68,9 +68,10 @@ Three ingestion paths, and the reason for each:
   collector mode. The exporters bind to `127.0.0.1` — the agent runs on the
   host as a deb package, so it reaches them over loopback and nothing on the
   LAN can.
-- **TrueNAS pushes Graphite.** It is not Ansible-managed and cannot take an
-  agent, so its built-in Reporting Exporter speaks the Graphite line protocol
-  to `graphite_exporter`, which translates.
+- **TrueNAS pushes Graphite.** It cannot take an agent, so its built-in
+  Reporting Exporter speaks the Graphite line protocol to `graphite_exporter`,
+  which translates. The exporter is declared in core's TrueNAS Ansible
+  (`truenas_reporting_exporters`), a contract with this repo.
 
 ## What is watched
 
@@ -217,8 +218,8 @@ second, separate cluster after a rebuild.
 
 ## 4. Point TrueNAS at the stack
 
-TrueNAS is not Ansible-managed, so this is a one-time manual step — the same
-category as the Tailscale route approval in the Nextcloud runbook.
+Two parts: netdata's config file (4a) is a manual step, because TrueNAS owns
+`/etc`. The Reporting Exporter (4b) is declared in core's TrueNAS Ansible.
 
 ### 4a. Restore netdata's metrics (25.04 and newer)
 
@@ -237,9 +238,13 @@ sudo systemctl restart netdata
 > upgrade, this is the first thing to re-apply. There is no way around it from
 > this repo — TrueNAS owns `/etc`.
 
-### 4b. Create the Reporting Exporter
+### 4b. The Reporting Exporter
 
-In the TrueNAS UI: **Reporting → Exporters → Add**.
+Core declares it in `truenas_reporting_exporters`
+(`TrueNAS/ansible/inventory/group_vars/truenas.yml`), and its
+`mise run truenas:play playbooks/site.yml` creates it or puts it back. A
+change to the values below is a change there. They are, in UI terms
+(Reporting → Exporters):
 
 | Field | Value |
 |---|---|
