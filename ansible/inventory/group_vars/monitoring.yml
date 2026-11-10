@@ -36,7 +36,7 @@ es_node_name: "{{ inventory_hostname }}"
 # and re-run: cluster.initial_master_nodes is a bootstrap-only setting and
 # leaving it set is how a node can silently form a second, separate cluster
 # after a rebuild.
-es_bootstrap_cluster: true
+es_bootstrap_cluster: false
 
 # A single node cannot place replica shards anywhere, so every index that asks
 # for one sits at yellow forever and cluster health never reaches green. The
