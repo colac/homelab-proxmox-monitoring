@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/colac/homelab-proxmox-monitoring/compare/v1.3.0...v1.3.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **update:** report Fleet Server's version from its own container ([c556f69](https://github.com/colac/homelab-proxmox-monitoring/commit/c556f69957daf1fd564dd7d48817f6c4d6afe624))
+
 # [1.3.0](https://github.com/colac/homelab-proxmox-monitoring/compare/v1.2.0...v1.3.0) (2026-10-23)
 
 
