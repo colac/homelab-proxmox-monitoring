@@ -1,16 +1,16 @@
 # Rollout: monitoring the Proxmox host and the Pi-hole
 
-Status as of 2026-10-08. Run the steps in order. Each step is marked:
+Status as of 2026-11-10. Run the steps in order. Each step is marked:
 
 - **[you]** a command or click for you to run;
 - **[code]** a change to these repos that has not been written yet.
 
-What is already done, on branches you have not yet committed:
+Where it stands:
 
-- core `feat/proxmox-host-config`: the Pi-hole container goes from 512 MB to
-  1 GB, plus `proxmox/configure.sh` and `proxmox/backup.sh`;
-- monitoring `feat/pihole-agent`: `pihole-ct` is in the `agents` group (your
-  local `hosts.yml`, and `hosts.yml.example`).
+- **Part A** is done for the container (1 GB, `dns-agents-policy`, agent
+  healthy); both branches are merged. A6 waits for the Raspberry Pi.
+- **Parts B, C and D** are not started: the node has no agent and no metric
+  server, and nothing listens on `:4318`.
 
 ## Why this design
 
@@ -42,7 +42,7 @@ resolver. Check on the node: `pct config 103 | grep -E '^(memory|swap)'`.
 
 ### A2 [done] A Fleet policy for DNS hosts
 
-Written on `feat/pihole-agent`, but not yet run against Fleet. It contains:
+Merged (`feat/pihole-agent-and-updates`) and run against Fleet. It contains:
 
 - `group_vars/all.yml`: `dns_agents_policy_id: dns-agents-policy`, and one
   `fleet_agent_policies` table that both roles read.
